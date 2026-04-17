@@ -213,7 +213,7 @@ class DashboardFragment : Fragment() {
             val pInfo = requireContext().packageManager.getPackageInfo(requireContext().packageName, 0)
             pInfo.versionName
         } catch (e: Exception) {
-            "0.00.02"
+            "0.00.03"
         }
         binding.versionNumberText.text = "v$versionName"
     }

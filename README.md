@@ -9,16 +9,20 @@
 ## Overview
 BT Android Agent is an Android test app for Bluetooth speaker validation on Android 12+ devices.
 
-The project currently focuses on three practical workflows:
+The project currently focuses on five practical workflows:
 - A **Dashboard** for discovery, pairing, basic connection control, and quick audio checks.
 - A **Stress Test** module for repeated connect/disconnect and playback verification.
 - A **Media Control Stress** module for AVRCP/media-key and volume automation checks.
+- An **HFP / SCO Stress** module for call-path handover verification.
+- A **Battery Monitor** module for battery-level polling and logging.
 
 The app uses a single-activity, fragment-based structure:
 - `MainActivity`
 - `DashboardFragment`
 - `StressTestFragment`
 - `MediaControlStressFragment`
+- `HfpStressFragment`
+- `BatteryMonitorFragment`
 
 ## Current App Features
 ### 1. Dashboard
@@ -45,10 +49,11 @@ Important note:
 - Play a generated **10-second test tone** from the Dashboard.
 - Read current A2DP profile connection state.
 - Read HFP/HEADSET profile connection state.
-- Attempt to read the active A2DP codec summary.
+- **Current A2DP Codec Summary**: Displays the active codec (SBC, AAC, LDAC, etc.).
+  - **Note**: Codec reporting is **Read-Only**. Android does not allow third-party apps to change codecs programmatically due to security restrictions (requires system-level permissions).
 
 Important note:
-- A2DP codec reporting is also best-effort.
+- A2DP codec reporting is best-effort.
 - Some codec information depends on hidden or device-specific APIs and may return only partial data.
 
 ### 4. Stress Test Module
@@ -84,7 +89,20 @@ Important note:
 - **Navigation Safety**: Intercepts navigation attempts if a test is running, prompting the user to stop the test before switching pages.
 - **Requirement**: Requires a background media app (like Spotify) for media key commands to take effect.
 
-### 6. Desktop Diagnostics Tools
+### 6. HFP / SCO Stress Test
+- **Manual SCO Control**: Manually trigger `startBluetoothSco()` and `stopBluetoothSco()` to toggle between Music (A2DP) and Call (HFP) modes.
+- **Automation Loop**: 
+  - Define custom durations for A2DP and HFP states.
+  - Repeatedly toggle profiles to verify the speaker's firmware stability during profile handovers.
+  - Monitor if the audio path correctly restores to high-quality A2DP after the "call" ends.
+
+### 7. Battery Monitor
+- **Real-time Level**: Read current battery percentage (%) of the connected Bluetooth device.
+- **Battery History Logger**: Automatically poll battery levels at custom intervals (e.g., every 1 or 5 minutes).
+- **Discharge/Charge Tracking**: Useful for long-term battery life verification or charging curve analysis.
+- **Log Export**: Copy time-stamped battery data to clipboard for Excel analysis.
+
+### 8. Desktop Diagnostics Tools
 The repository also includes Python helper tools under `tools/`:
 - `adb_bt_summary.py`
   - parses `adb shell dumpsys bluetooth_manager`
@@ -94,6 +112,13 @@ The repository also includes Python helper tools under `tools/`:
   - desktop Tkinter viewer for the parsed Bluetooth summary
   - supports refresh and watch mode
 
+## Future Roadmap (SQA Ideas)
+- **Battery Graph**: Integration of a real-time graph view for battery discharging/charging.
+- **AVRCP Metadata**: Verification of track information (title/artist) synchronization.
+- **BLE Battery**: Reading precise battery levels via GATT Battery Service if available.
+- **Absolute Volume**: Automated testing of volume synchronization between phone and speaker.
+- **Multi-point**: Automated audio source preemptive testing between two connected agents.
+
 ## Repository Structure
 ```text
 app/
@@ -102,11 +127,15 @@ app/
     DashboardFragment.kt
     StressTestFragment.kt
     MediaControlStressFragment.kt
+    HfpStressFragment.kt
+    BatteryMonitorFragment.kt
     StressTestActivity.kt
   src/main/res/
     layout/
       ...
       fragment_media_control_stress.xml
+      fragment_hfp_stress.xml
+      fragment_battery_monitor.xml
     values/
     menu/
 tools/
@@ -138,6 +167,9 @@ This is intended for internal testing distribution. It currently builds an unsig
 - `BLUETOOTH_SCAN`
 - `BLUETOOTH_CONNECT`
 - `ACCESS_FINE_LOCATION`
+- `MODIFY_AUDIO_SETTINGS`
+- `RECORD_AUDIO`
+- `BLUETOOTH_ADVERTISE`
 
 Manifest also declares:
 - Classic Bluetooth support
@@ -189,7 +221,9 @@ python3 tools/bt_summary_gui.py
 - Connect/disconnect behavior is best-effort and may be blocked by platform restrictions.
 - Codec reporting depends on device support and may return incomplete information.
 - Media key automation depends on an active background player session; without a compatible media app, AVRCP-style commands may appear to do nothing.
+- HFP / SCO behavior can vary significantly across Android devices and may be affected by OEM audio routing policies.
+- Bluetooth battery reporting is device-dependent; some speakers do not expose usable battery values to third-party apps.
 - The project currently mixes production UI code with some legacy/experimental code paths, such as `StressTestActivity`, which is not the main in-app flow.
 
 ## Version
-- App version: `0.00.02`
+- App version: `0.00.03`
