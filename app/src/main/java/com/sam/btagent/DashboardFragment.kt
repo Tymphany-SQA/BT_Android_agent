@@ -214,7 +214,7 @@ class DashboardFragment : Fragment() {
             val pInfo = requireContext().packageManager.getPackageInfo(requireContext().packageName, 0)
             pInfo.versionName
         } catch (e: Exception) {
-            "0.00.03"
+            "0.00.05"
         }
         binding.versionNumberText.text = "v$versionName"
     }
@@ -238,7 +238,7 @@ class DashboardFragment : Fragment() {
             val pInfo = requireActivity().packageManager.getPackageInfo(requireActivity().packageName, 0)
             pInfo.versionName
         } catch (e: Exception) {
-            "0.00.03"
+            "0.00.05"
         }
 
         androidx.appcompat.app.AlertDialog.Builder(requireContext())

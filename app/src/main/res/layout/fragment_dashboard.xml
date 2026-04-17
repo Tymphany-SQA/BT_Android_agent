@@ -33,7 +33,7 @@
                 android:layout_alignBottom="@id/appTitle"
                 android:layout_marginStart="8dp"
                 android:layout_toEndOf="@id/appTitle"
-                android:text="v0.00.03"
+                android:text="v0.00.05"
                 android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
                 android:textColor="?android:attr/textColorSecondary" />
         </RelativeLayout>

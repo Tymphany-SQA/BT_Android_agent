@@ -44,11 +44,15 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
                     updateLoggingUI(true)
                     binding.batteryHistoryText.text = it.getFullLog()
                     autoScrollLog()
+                    // Update RSSI immediately if bound
+                    updateRssiUI(it.getLastKnownRssi())
                 }
                 it.setLogUpdateListener { newEntry ->
                     activity?.runOnUiThread {
                         binding.batteryHistoryText.append(newEntry)
                         autoScrollLog()
+                        // Extract RSSI from log entry or fetch from service
+                        updateRssiUI(service?.getLastKnownRssi())
                     }
                 }
             }
@@ -153,6 +157,11 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun updateCurrentBatteryUI(level: Int) {
         val levelText = if (level >= 0) "$level%" else "--%"
         binding.currentBatteryText.text = "Current: $levelText"
+    }
+
+    private fun updateRssiUI(rssi: Int?) {
+        val rssiText = rssi?.let { "RSSI: $it dBm" } ?: "RSSI: -- dBm"
+        binding.currentRssiText.text = rssiText
     }
 
     private fun startLogging() {

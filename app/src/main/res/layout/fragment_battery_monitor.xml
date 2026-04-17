@@ -37,6 +37,16 @@
                 android:layout_gravity="center_horizontal"/>
 
             <TextView
+                android:id="@+id/currentRssiText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="RSSI: -- dBm"
+                android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="4dp"/>
+
+            <TextView
                 android:id="@+id/targetDeviceName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

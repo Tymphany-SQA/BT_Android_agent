@@ -14,7 +14,7 @@ The current app is organized around five bottom-navigation pages:
 - **Stress Test**
 - **Media Stress**
 - **HFP Stress**
-- **Battery**
+- **Battery**: Background-capable battery and signal strength (RSSI) monitor.
 
 It uses a single-activity, fragment-based structure:
 - `MainActivity`
@@ -22,7 +22,7 @@ It uses a single-activity, fragment-based structure:
 - `StressTestFragment`
 - `MediaControlStressFragment`
 - `HfpStressFragment`
-- `BatteryMonitorFragment`
+- `BatteryMonitorFragment` (Communicates with `BatteryLoggingService`)
 
 ## Current UI and Features
 ### 1. Dashboard
@@ -151,24 +151,28 @@ Behavior:
 - Helps validate whether audio routing returns correctly after simulated call-mode transitions.
 
 ### 5. Battery
-The Battery page focuses on battery polling and history logging.
+The Battery page focuses on long-term battery polling and signal stability logging.
 
 UI sections:
-- current battery card
+- **Current Battery & Signal** card
   - current battery percentage
+  - current RSSI (dBm) strength
   - current target device
-- logger settings card
+- **Logger Settings** card
   - logging interval input
-  - `Start Logging`
+  - `Start Logging` (Starts a Foreground Service)
   - `Stop Logging`
-- history log card
-  - battery log output
+- **History Log** card
+  - battery and RSSI log output with timestamps
+  - auto-scrolling log view
   - `Clear`
 
 Behavior:
-- Detects a connected Bluetooth device, prioritizing A2DP-connected devices.
-- Reads battery level when available.
-- Logs battery history at a user-defined interval.
+- **Foreground Service**: Uses `BatteryLoggingService` to continue polling even when the app is in the background or the screen is off.
+- **RSSI Tracking**: Automatically triggers a short discovery during each poll to capture signal strength (RSSI) of the connected device.
+- **Event Monitoring**: Logs ACL connection/disconnection events in real-time.
+- **Battery Fallback Paths**: Tries the platform battery API first, then falls back to BLE GATT Battery Service reads when the device exposes them.
+- **Auto-Scroll**: The history log automatically scrolls to the latest entry unless manually scrolled by the user.
 - Supports clipboard-friendly timestamped logs for later analysis.
 
 ## Navigation Safety
@@ -194,6 +198,7 @@ app/
     MediaControlStressFragment.kt
     HfpStressFragment.kt
     BatteryMonitorFragment.kt
+    BatteryLoggingService.kt
     StressTestActivity.kt
   src/main/res/
     layout/
@@ -292,4 +297,4 @@ python3 tools/bt_summary_gui.py
 - The project currently mixes production UI code with some legacy or experimental code paths, such as `StressTestActivity`, which is not the main in-app flow.
 
 ## Version
-- App version: `0.00.03`
+- App version: `0.00.05`

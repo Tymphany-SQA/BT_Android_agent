@@ -152,25 +152,29 @@ HFP Stress 頁面用來驗證 SCO / 通話音訊路徑切換。
 - 適合驗證裝置在模擬來電與通話結束後，是否能正確回到 A2DP 路徑
 
 ### 5. Battery
-Battery 頁面用來做藍牙裝置電量讀取與長時間記錄。
+Battery 頁面用來做背景式電量與訊號強度（RSSI）長時間記錄。
 
 畫面區塊：
-- 目前電量卡片
+- **Current Battery & Signal** 卡片
   - 目前電量百分比
+  - 目前 RSSI（dBm）
   - 目前目標裝置
-- logger 設定卡片
+- **Logger Settings** 卡片
   - interval input
-  - `Start Logging`
+  - `Start Logging`（啟動 Foreground Service）
   - `Stop Logging`
-- history log 卡片
-  - 電量記錄輸出
+- **History Log** 卡片
+  - 含時間戳的電量與 RSSI 記錄輸出
+  - 自動捲動的 log 視窗
   - `Clear`
 
 功能：
-- 優先偵測 A2DP 連線中的裝置
-- 可讀取裝置電量（若裝置有提供）
-- 可依自訂間隔持續記錄電量
-- 適合做長時間放電 / 充電曲線追蹤
+- **Foreground Service**：透過 `BatteryLoggingService` 在 app 退到背景或螢幕關閉後仍持續記錄。
+- **RSSI 追蹤**：每次輪詢時會短暫觸發 discovery 來補抓目前連線裝置的 RSSI。
+- **事件監控**：會即時記錄 ACL connected / disconnected 事件。
+- **電量備援路徑**：會先嘗試平台 battery API，若裝置有提供 BLE GATT Battery Service，也會用它做補讀。
+- **Auto-Scroll**：log 會自動捲到最新一筆，除非使用者手動停在較前面的內容。
+- 適合做長時間放電 / 充電曲線與訊號穩定度追蹤
 
 ## 導頁保護機制
 如果目前頁面正在執行測試，切換底部導覽頁面時，app 會先詢問是否停止測試，再切換頁面，避免誤切頁造成測試中斷。
@@ -195,6 +199,7 @@ app/
     MediaControlStressFragment.kt
     HfpStressFragment.kt
     BatteryMonitorFragment.kt
+    BatteryLoggingService.kt
     StressTestActivity.kt
   src/main/res/
     layout/
@@ -293,4 +298,4 @@ python3 tools/bt_summary_gui.py
 - 專案目前仍混有部分舊版或實驗性路徑，例如 `StressTestActivity`，它不是目前 app 內主要流程。
 
 ## 版本
-- App 版本：`0.00.03`
+- App 版本：`0.00.05`
