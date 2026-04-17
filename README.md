@@ -1,58 +1,179 @@
 # BT Android Agent
 
+[中文版本 / Chinese version](./README.zh-TW.md)
+
 **Author:** Sam Chang (TYMPHANY SQA)  
 **Organization:** TYMPHANY Taipei  
-**Website:** [WWW.TYMPHANY.COM](https://WWW.TYMPHANY.COM)
+**Website:** [www.tymphany.com](https://www.tymphany.com)
 
-## Project Overview
-A specialized Android application and toolset for evaluating Bluetooth speaker stability, connection reliability, and audio performance. This project features a modern Fragment-based architecture and robust logging for automated stress testing.
+## Overview
+BT Android Agent is an Android test app for Bluetooth speaker validation on Android 12+ devices.
 
-## Key Features
-- **Bluetooth Dashboard:**
-    - Real-time monitoring of Bluetooth adapter and connected devices.
-    - Support for both Classic Bluetooth and BLE scanning.
-    - Quick access to profile connection status (A2DP, HFP).
-    - Audio test tone generator for quick validation.
-- **Stress Test Module:**
-    - Automated 7-step test sequence: Play -> Pause -> Disconnect -> Wait -> Connect -> Play Again -> Loop.
-    - Configurable play duration, pause intervals, and repeat counts.
-    - Built-in audio samples: Soft Piano, Zen Bells, and Standard Beep.
-    - Comprehensive test logging with "Copy to Clipboard" and "Clear" functionality.
-- **Modern Architecture:** Single-activity pattern using `DashboardFragment` and `StressTestFragment` with stable lifecycle management.
+The project currently focuses on two practical workflows:
+- A **Dashboard** for discovery, pairing, basic connection control, and quick audio checks.
+- A **Stress Test** module for repeated connect/disconnect and playback verification.
 
-## Getting Started
-1. **Android App:**
-    - Open this project folder in Android Studio.
-    - Sync Gradle and install required SDK components.
-    - Run the `app` module on a connected Android device.
-    - Grant Bluetooth and Location permissions when prompted.
-2. **Desktop Diagnostics (Mac/Linux/Windows):**
-    - Ensure Python 3 is installed.
-    - Use the command-line helper for deep protocol analysis:
-      ```bash
-      python3 tools/adb_bt_summary.py
-      ```
-    - Launch the GUI dashboard for a desktop view of Bluetooth status:
-      ```bash
-      python3 tools/bt_summary_gui.py
-      ```
+The app uses a single-activity, fragment-based structure:
+- `MainActivity`
+- `DashboardFragment`
+- `StressTestFragment`
 
-## Command-Line Usage
+## Current App Features
+### 1. Dashboard
+- Scan nearby devices with **Classic + BLE** discovery.
+- Stop an active scan manually.
+- Show discovered devices in a tappable list.
+- Start pairing from the discovery list.
+- Show bonded / paired devices in a separate list.
+- Auto-select the only bonded device when there is just one candidate.
+- Display a device details card for the selected bonded device.
+
+### 2. Device Control
+- **Connect** the selected bonded device with best-effort profile requests.
+- **Disconnect** the selected bonded device with best-effort profile requests.
+- **Unpair** the selected bonded device.
+- Launch the selected device directly into the built-in stress test page.
+
+Important note:
+- Android does **not** provide stable public APIs for all Bluetooth profile connect/disconnect operations.
+- This app uses best-effort profile proxy calls for `A2DP` and `HEADSET/HFP`.
+- Behavior can vary by Android version, OEM build, and device policy.
+
+### 3. Audio / Codec Checks
+- Play a generated **10-second test tone** from the Dashboard.
+- Read current A2DP profile connection state.
+- Read HFP/HEADSET profile connection state.
+- Attempt to read the active A2DP codec summary.
+
+Important note:
+- A2DP codec reporting is also best-effort.
+- Some codec information depends on hidden or device-specific APIs and may return only partial data.
+
+### 4. Stress Test Module
+- Select a target device from the Dashboard and switch to the stress test screen.
+- Configure:
+  - play duration
+  - pause interval
+  - repeat count
+  - generated audio type
+- Run an automated loop:
+  1. play audio
+  2. pause
+  3. disconnect
+  4. pause
+  5. connect
+  6. play audio again
+  7. wait before next loop
+- View live progress:
+  - current status
+  - loop counter
+  - progress bar
+  - timestamped log output
+- Copy the log to clipboard.
+- Clear the log in-app.
+
+### 5. Desktop Diagnostics Tools
+The repository also includes Python helper tools under `tools/`:
+- `adb_bt_summary.py`
+  - parses `adb shell dumpsys bluetooth_manager`
+  - extracts bonded-device metadata, codec info, and A2DP state
+  - supports text and JSON output
+- `bt_summary_gui.py`
+  - desktop Tkinter viewer for the parsed Bluetooth summary
+  - supports refresh and watch mode
+
+## Repository Structure
+```text
+app/
+  src/main/java/com/sam/btagent/
+    MainActivity.kt
+    DashboardFragment.kt
+    StressTestFragment.kt
+    StressTestActivity.kt
+  src/main/res/
+    layout/
+    values/
+    menu/
+tools/
+  adb_bt_summary.py
+  bt_summary_gui.py
+```
+
+## GitHub Actions
+The repository includes a GitHub Actions workflow for test APK generation:
+- Workflow file: `.github/workflows/build-test-apk.yml`
+- Triggers:
+  - manual run via `workflow_dispatch`
+  - automatic run when a GitHub Release is published
+- Output:
+  - builds a **debug APK** for testing
+  - uploads the APK as a workflow artifact
+  - attaches the APK to the GitHub Release asset when triggered from a release event
+
+This is intended for internal testing distribution. It currently builds an unsigned debug APK rather than a store-ready signed release APK.
+
+## Requirements
+### Android App
+- Android Studio
+- Android SDK 35
+- Java 17
+- Android device running **Android 12+** (`minSdk = 31`)
+
+### Permissions Used
+- `BLUETOOTH_SCAN`
+- `BLUETOOTH_CONNECT`
+- `ACCESS_FINE_LOCATION`
+
+Manifest also declares:
+- Classic Bluetooth support
+- BLE support
+
+## Build and Run
+### Android Studio
+1. Open this folder in Android Studio.
+2. Sync Gradle.
+3. Connect an Android device.
+4. Run the `app` module.
+5. Grant Bluetooth and location-related permissions when prompted.
+
+### Command Line
 ```bash
-# Basic summary
+cd /Users/sam/code/BT_Android_agent
+./gradlew :app:assembleDebug
+```
+
+## Desktop Tool Usage
+### ADB Summary Script
+```bash
+cd /Users/sam/code/BT_Android_agent
+
+# basic summary
 python3 tools/adb_bt_summary.py
 
-# Filter by device name
+# filter by device
 python3 tools/adb_bt_summary.py --device "ACTON III"
 
-# Output in JSON format for external parsing
+# JSON output
 python3 tools/adb_bt_summary.py --json
 
-# Specific diagnostics
+# codec-only view
 python3 tools/adb_bt_summary.py --codec-only
+
+# metadata-only view
 python3 tools/adb_bt_summary.py --metadata-only
 ```
 
-## Maintenance & Versioning
-- **Current Version:** v0.00.01
-- **CI/CD:** Supports GitHub Actions for automated APK generation (config required in `.github/workflows`).
+### GUI Summary Panel
+```bash
+cd /Users/sam/code/BT_Android_agent
+python3 tools/bt_summary_gui.py
+```
+
+## Known Limitations
+- The Android Bluetooth Settings page can sometimes see Classic devices that a regular third-party app cannot discover through `startDiscovery()`.
+- Connect/disconnect behavior is best-effort and may be blocked by platform restrictions.
+- Codec reporting depends on device support and may return incomplete information.
+- The project currently mixes production UI code with some legacy/experimental code paths, such as `StressTestActivity`, which is not the main in-app flow.
+
+## Version
+- App version: `0.00.01`
