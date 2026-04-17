@@ -57,8 +57,8 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_dashboard -> replaceFragment(DashboardFragment())
             R.id.nav_stress_test -> replaceFragment(StressTestFragment())
             R.id.nav_media_control -> replaceFragment(MediaControlStressFragment())
-            R.id.nav_hfp_stress -> replaceFragment(HfpStressFragment())
             R.id.nav_battery_monitor -> replaceFragment(BatteryMonitorFragment())
+            R.id.nav_acoustic_loopback -> replaceFragment(AcousticLoopbackFragment())
         }
     }
 
@@ -72,5 +72,9 @@ class MainActivity : AppCompatActivity() {
         val fragment = StressTestFragment.newInstance(address, name)
         binding.bottomNavigation.selectedItemId = R.id.nav_stress_test
         replaceFragment(fragment)
+    }
+
+    fun switchToHfpStress() {
+        replaceFragment(HfpStressFragment())
     }
 }

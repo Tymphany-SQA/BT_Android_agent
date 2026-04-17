@@ -7,17 +7,17 @@
     <item
         android:id="@+id/nav_stress_test"
         android:icon="@android:drawable/ic_menu_recent_history"
-        android:title="Stress Test" />
+        android:title="Stress" />
     <item
         android:id="@+id/nav_media_control"
         android:icon="@android:drawable/ic_menu_slideshow"
-        android:title="Media Stress" />
-    <item
-        android:id="@+id/nav_hfp_stress"
-        android:icon="@android:drawable/stat_sys_phone_call"
-        android:title="HFP Stress" />
+        android:title="Media" />
     <item
         android:id="@+id/nav_battery_monitor"
         android:icon="@android:drawable/ic_lock_idle_low_battery"
         android:title="Battery" />
+    <item
+        android:id="@+id/nav_acoustic_loopback"
+        android:icon="@android:drawable/ic_btn_speak_now"
+        android:title="Acoustic" />
 </menu>

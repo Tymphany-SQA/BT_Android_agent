@@ -12,9 +12,11 @@ BT Android Agent is an Android 12+ Bluetooth validation tool for speaker testing
 The current app is organized around five bottom-navigation pages:
 - **Dashboard**
 - **Stress Test**
-- **Media Stress**
-- **HFP Stress**
+- **Media**
 - **Battery**: Background-capable battery and signal strength (RSSI) monitor.
+- **Acoustic**: Real-time 1kHz loopback test for audio continuity and frequency validation.
+
+In addition, the Dashboard provides a direct shortcut into **HFP Stress** for SCO / call-path validation.
 
 It uses a single-activity, fragment-based structure:
 - `MainActivity`
@@ -23,6 +25,7 @@ It uses a single-activity, fragment-based structure:
 - `MediaControlStressFragment`
 - `HfpStressFragment`
 - `BatteryMonitorFragment` (Communicates with `BatteryLoggingService`)
+- `AcousticLoopbackFragment` (Tone Generator + Real-time Goertzel Analysis)
 
 ## Current UI and Features
 ### 1. Dashboard
@@ -43,6 +46,7 @@ UI sections:
   - `Raw Info`
   - `Unpair`
   - `Stress Test`
+  - `HFP Stress`
   - connection status summary
   - raw diagnostic text
 - **About card**
@@ -55,6 +59,7 @@ Behavior:
 - Enables quick connect / disconnect requests for the selected device.
 - Plays a generated 10-second test tone.
 - Opens the selected device directly in the Stress Test page.
+- Opens HFP Stress directly from the device details area.
 - Displays A2DP / HFP connection hints and codec summary.
 
 Important note:
@@ -94,8 +99,8 @@ Behavior:
 - Copies logs to clipboard.
 - Clears logs in-app.
 
-### 3. Media Stress
-The Media Stress page focuses on AVRCP/media-key and volume automation checks.
+### 3. Media
+The Media page focuses on AVRCP/media-key and volume automation checks.
 
 UI sections:
 - page status header
@@ -150,6 +155,9 @@ Behavior:
 - Repeatedly alternates between A2DP and HFP timing windows.
 - Helps validate whether audio routing returns correctly after simulated call-mode transitions.
 
+Entry point:
+- This page is opened from the Dashboard `HFP Stress` button rather than from bottom navigation.
+
 ### 5. Battery
 The Battery page focuses on long-term battery polling and signal stability logging.
 
@@ -175,6 +183,27 @@ Behavior:
 - **Auto-Scroll**: The history log automatically scrolls to the latest entry unless manually scrolled by the user.
 - Supports clipboard-friendly timestamped logs for later analysis.
 
+### 6. Acoustic
+The Acoustic page provides a simple speaker-to-microphone loopback check using a generated 1kHz tone and real-time microphone analysis.
+
+UI sections:
+- **Tone Generator (1kHz)** card
+  - `Start 1kHz Tone`
+  - `Stop 1kHz Tone`
+- **Real-time Monitor** card
+  - input level progress bar
+  - 1kHz detection status badge
+  - magnitude readout
+- **Event Log** card
+  - timestamped detection log
+
+Behavior:
+- Generates a continuous 1kHz output tone with `AudioTrack`.
+- Samples microphone input with `AudioRecord`.
+- Uses a Goertzel-based detector to estimate 1kHz energy in real time.
+- Shows `DETECTED` / `NO TONE` state changes and records transitions in the event log.
+- Stops playback and monitoring automatically when the page is closed.
+
 ## Navigation Safety
 If a stress-related page is running a test, the app intercepts bottom-navigation changes and asks whether the user wants to stop the running test before switching pages.
 
@@ -199,7 +228,7 @@ app/
     HfpStressFragment.kt
     BatteryMonitorFragment.kt
     BatteryLoggingService.kt
-    StressTestActivity.kt
+    AcousticLoopbackFragment.kt
   src/main/res/
     layout/
       fragment_dashboard.xml
@@ -207,6 +236,7 @@ app/
       fragment_media_control_stress.xml
       fragment_hfp_stress.xml
       fragment_battery_monitor.xml
+      fragment_acoustic_loopback.xml
     values/
     menu/
 tools/
@@ -294,7 +324,7 @@ python3 tools/bt_summary_gui.py
 - Media key automation depends on an active background player session; without a compatible media app, AVRCP-style commands may appear to do nothing.
 - HFP / SCO behavior can vary significantly across Android devices and may be affected by OEM audio routing policies.
 - Bluetooth battery reporting is device-dependent; some speakers do not expose usable battery values to third-party apps.
-- The project currently mixes production UI code with some legacy or experimental code paths, such as `StressTestActivity`, which is not the main in-app flow.
+- Acoustic loopback detection depends on speaker volume, microphone gain, device acoustics, and environmental noise; threshold tuning may be needed across devices.
 
 ## Version
-- App version: `0.00.05`
+- App version: `0.00.06`

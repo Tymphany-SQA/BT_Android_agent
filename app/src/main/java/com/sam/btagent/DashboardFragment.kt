@@ -146,6 +146,9 @@ class DashboardFragment : Fragment() {
         binding.disconnectDeviceButton.setOnClickListener { requestDeviceConnection(connect = false) }
         binding.unpairDeviceButton.setOnClickListener { unpairSelectedDevice() }
         binding.playTestAudioButton.setOnClickListener { playTestAudio() }
+        binding.btnHfpStress.setOnClickListener {
+            (activity as? MainActivity)?.switchToHfpStress()
+        }
         binding.toggleDetailsButton.setOnClickListener { toggleDeviceDetails() }
         binding.aboutCard.setOnClickListener { showAboutDialog() }
         
@@ -214,7 +217,7 @@ class DashboardFragment : Fragment() {
             val pInfo = requireContext().packageManager.getPackageInfo(requireContext().packageName, 0)
             pInfo.versionName
         } catch (e: Exception) {
-            "0.00.05"
+            "0.00.06"
         }
         binding.versionNumberText.text = "v$versionName"
     }
@@ -238,7 +241,7 @@ class DashboardFragment : Fragment() {
             val pInfo = requireActivity().packageManager.getPackageInfo(requireActivity().packageName, 0)
             pInfo.versionName
         } catch (e: Exception) {
-            "0.00.05"
+            "0.00.06"
         }
 
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
