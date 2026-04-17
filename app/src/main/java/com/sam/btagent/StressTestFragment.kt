@@ -28,7 +28,7 @@ import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.sin
 
-class StressTestFragment : Fragment() {
+class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private var _binding: FragmentStressTestBinding? = null
     private val binding get() = _binding!!
@@ -395,6 +395,14 @@ class StressTestFragment : Fragment() {
     private fun clearLog() {
         val timeStamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         binding.testLogText.text = getString(R.string.log_cleared_at, timeStamp)
+    }
+
+    override fun isTestRunning(): Boolean {
+        return isTesting
+    }
+
+    override fun stopTest() {
+        stopStressTest()
     }
 
     override fun onDestroyView() {

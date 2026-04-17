@@ -9,9 +9,10 @@
 ## 專案概述
 BT Android Agent 是一個用於 Android 12+ 裝置的藍牙喇叭驗證工具，主要用來檢查掃描、配對、連線穩定性、音訊播放與壓力測試流程。
 
-目前專案主要分成兩個工作流：
+目前專案主要分成三個工作流：
 - **Dashboard**：負責掃描、配對、基本連線控制與快速音訊驗證
 - **Stress Test**：負責反覆 connect / disconnect / playback 的壓力測試
+- **Media Control Stress**：負責 AVRCP / 媒體按鍵 / 音量自動化壓力測試
 
 App 採用單一 Activity、Fragment 導向架構：
 - `MainActivity`
@@ -72,7 +73,21 @@ App 採用單一 Activity、Fragment 導向架構：
 - 支援把 log 複製到剪貼簿
 - 支援 app 內清除 log
 
-### 5. 桌面診斷工具
+### 5. Media Control Stress 模組
+- 支援手動送出標準媒體鍵：
+  - Play / Pause
+  - Next
+  - Previous
+  - Stop
+- 支援手動調整系統媒體音量（Vol+ / Vol-）
+- 支援一鍵開啟 Spotify，方便快速建立可測試的背景播放器
+- 支援兩種自動化壓力模式：
+  - **Volume Cycle**：在自訂最小/最大百分比之間循環調整音量
+  - **Rapid Commands**：以高頻率反覆送出 Play/Pause、Next、Prev、Stop 等媒體鍵
+- 若目前有測試正在執行，切換頁面時會先跳出確認視窗，避免誤切頁造成測試中斷
+- 此模組需要背景有支援媒體控制的 app（例如 Spotify），媒體鍵才會有明顯效果
+
+### 6. 桌面診斷工具
 專案也包含 Python 工具，位於 `tools/`：
 - `adb_bt_summary.py`
   - 解析 `adb shell dumpsys bluetooth_manager`
@@ -173,7 +188,8 @@ python3 tools/bt_summary_gui.py
 - Android 藍牙設定頁有時能看到某些 Classic 裝置，但一般第三方 app 透過 `startDiscovery()` 不一定能看到。
 - Connect / disconnect 屬於 best-effort，可能受到平台限制。
 - Codec 資訊會依裝置支援度不同而不完整。
+- 媒體鍵與 AVRCP 自動化依賴背景播放器狀態；若沒有活躍的媒體 session，看起來可能像是沒有作用。
 - 專案目前仍混有部分舊版或實驗性路徑，例如 `StressTestActivity`，它不是目前 app 內主要流程。
 
 ## 版本
-- App 版本：`0.00.01`
+- App 版本：`0.00.02`

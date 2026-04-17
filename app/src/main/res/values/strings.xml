@@ -45,4 +45,16 @@
     <string name="test_status_label">Status: %1$s</string>
     <string name="test_status_idle">Idle</string>
     <string name="log_cleared_at">Log cleared at %1$s\n</string>
+    <string name="nav_media_stress">Media Stress</string>
+    <string name="stop_test_title">Stop Running Test?</string>
+    <string name="stop_test_message">A stress test is currently running. Would you like to stop it and switch pages?</string>
+    <string name="stop_and_switch">Stop &amp; Switch</string>
+    <string name="cancel">Cancel</string>
+    <string name="media_stress_hint">Hint: Open a music app (e.g., Spotify) in the background to test Play/Pause/Next/Prev commands.</string>
+    <string name="open_spotify">Open Spotify</string>
+    <string name="vol_interval_hint">Vol Interval (ms)</string>
+    <string name="min_pct_hint">Min %</string>
+    <string name="max_pct_hint">Max %</string>
+    <string name="base_interval_hint">Base Interval (ms)</string>
+    <string name="random_range_hint">Random Range (ms)</string>
 </resources>

@@ -9,14 +9,16 @@
 ## Overview
 BT Android Agent is an Android test app for Bluetooth speaker validation on Android 12+ devices.
 
-The project currently focuses on two practical workflows:
+The project currently focuses on three practical workflows:
 - A **Dashboard** for discovery, pairing, basic connection control, and quick audio checks.
 - A **Stress Test** module for repeated connect/disconnect and playback verification.
+- A **Media Control Stress** module for AVRCP/media-key and volume automation checks.
 
 The app uses a single-activity, fragment-based structure:
 - `MainActivity`
 - `DashboardFragment`
 - `StressTestFragment`
+- `MediaControlStressFragment`
 
 ## Current App Features
 ### 1. Dashboard
@@ -72,7 +74,17 @@ Important note:
 - Copy the log to clipboard.
 - Clear the log in-app.
 
-### 5. Desktop Diagnostics Tools
+### 5. Media Control Stress (AVRCP)
+- **Manual Controls**: Send standard AVRCP commands (Play, Pause, Next, Previous, Stop).
+- **Volume Control**: Adjust system media volume (Vol+ / Vol-) directly.
+- **One-Click Tools**: Quick launch button for **Spotify** to facilitate testing.
+- **Automation Stress**:
+  - **Volume Cycle**: Ramps volume between custom limits (e.g., 20% to 70%) to test gain stability.
+  - **Rapid Commands**: Select multiple commands (Play/Pause, Next, Prev, Stop) to loop through at high frequency.
+- **Navigation Safety**: Intercepts navigation attempts if a test is running, prompting the user to stop the test before switching pages.
+- **Requirement**: Requires a background media app (like Spotify) for media key commands to take effect.
+
+### 6. Desktop Diagnostics Tools
 The repository also includes Python helper tools under `tools/`:
 - `adb_bt_summary.py`
   - parses `adb shell dumpsys bluetooth_manager`
@@ -89,9 +101,12 @@ app/
     MainActivity.kt
     DashboardFragment.kt
     StressTestFragment.kt
+    MediaControlStressFragment.kt
     StressTestActivity.kt
   src/main/res/
     layout/
+      ...
+      fragment_media_control_stress.xml
     values/
     menu/
 tools/
@@ -173,7 +188,8 @@ python3 tools/bt_summary_gui.py
 - The Android Bluetooth Settings page can sometimes see Classic devices that a regular third-party app cannot discover through `startDiscovery()`.
 - Connect/disconnect behavior is best-effort and may be blocked by platform restrictions.
 - Codec reporting depends on device support and may return incomplete information.
+- Media key automation depends on an active background player session; without a compatible media app, AVRCP-style commands may appear to do nothing.
 - The project currently mixes production UI code with some legacy/experimental code paths, such as `StressTestActivity`, which is not the main in-app flow.
 
 ## Version
-- App version: `0.00.01`
+- App version: `0.00.02`

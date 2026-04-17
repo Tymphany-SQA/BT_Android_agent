@@ -8,4 +8,8 @@
         android:id="@+id/nav_stress_test"
         android:icon="@android:drawable/ic_menu_recent_history"
         android:title="Stress Test" />
+    <item
+        android:id="@+id/nav_media_control"
+        android:icon="@android:drawable/ic_menu_slideshow"
+        android:title="Media Stress" />
 </menu>

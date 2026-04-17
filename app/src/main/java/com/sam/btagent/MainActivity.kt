@@ -9,6 +9,11 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
+    interface TestStatusProvider {
+        fun isTestRunning(): Boolean
+        fun stopTest()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -21,17 +26,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.bottomNavigation.setOnItemSelectedListener { item ->
-            when (item.itemId) {
-                R.id.nav_dashboard -> {
-                    replaceFragment(DashboardFragment())
-                    true
-                }
-                R.id.nav_stress_test -> {
-                    replaceFragment(StressTestFragment())
-                    true
-                }
-                else -> false
+            val currentFragment = supportFragmentManager.findFragmentById(R.id.nav_host_fragment)
+            
+            if (currentFragment is TestStatusProvider && currentFragment.isTestRunning()) {
+                showStopTestDialog(item.itemId)
+                false // Don't switch yet
+            } else {
+                performNavigation(item.itemId)
+                true
             }
+        }
+    }
+
+    private fun showStopTestDialog(targetItemId: Int) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.stop_test_title)
+            .setMessage(R.string.stop_test_message)
+            .setPositiveButton(R.string.stop_and_switch) { _, _ ->
+                val currentFragment = supportFragmentManager.findFragmentById(R.id.nav_host_fragment)
+                (currentFragment as? TestStatusProvider)?.stopTest()
+                binding.bottomNavigation.selectedItemId = targetItemId
+                performNavigation(targetItemId)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun performNavigation(itemId: Int) {
+        when (itemId) {
+            R.id.nav_dashboard -> replaceFragment(DashboardFragment())
+            R.id.nav_stress_test -> replaceFragment(StressTestFragment())
+            R.id.nav_media_control -> replaceFragment(MediaControlStressFragment())
         }
     }
 
