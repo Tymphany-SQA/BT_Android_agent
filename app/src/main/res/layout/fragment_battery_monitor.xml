@@ -126,7 +126,9 @@
                 android:textColor="#00FF00"
                 android:fontFamily="monospace"
                 android:textSize="12sp"
-                android:scrollbars="vertical"/>
+                android:scrollbars="vertical"
+                android:fadeScrollbars="false"
+                android:scrollbarStyle="insideOverlay"/>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 

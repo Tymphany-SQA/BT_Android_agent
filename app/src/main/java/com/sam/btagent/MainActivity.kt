@@ -57,6 +57,8 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_dashboard -> replaceFragment(DashboardFragment())
             R.id.nav_stress_test -> replaceFragment(StressTestFragment())
             R.id.nav_media_control -> replaceFragment(MediaControlStressFragment())
+            R.id.nav_hfp_stress -> replaceFragment(HfpStressFragment())
+            R.id.nav_battery_monitor -> replaceFragment(BatteryMonitorFragment())
         }
     }
 

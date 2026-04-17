@@ -12,4 +12,12 @@
         android:id="@+id/nav_media_control"
         android:icon="@android:drawable/ic_menu_slideshow"
         android:title="Media Stress" />
+    <item
+        android:id="@+id/nav_hfp_stress"
+        android:icon="@android:drawable/stat_sys_phone_call"
+        android:title="HFP Stress" />
+    <item
+        android:id="@+id/nav_battery_monitor"
+        android:icon="@android:drawable/ic_lock_idle_low_battery"
+        android:title="Battery" />
 </menu>

@@ -7,16 +7,16 @@
 **Website:** [www.tymphany.com](https://www.tymphany.com)
 
 ## Overview
-BT Android Agent is an Android test app for Bluetooth speaker validation on Android 12+ devices.
+BT Android Agent is an Android 12+ Bluetooth validation tool for speaker testing.
 
-The project currently focuses on five practical workflows:
-- A **Dashboard** for discovery, pairing, basic connection control, and quick audio checks.
-- A **Stress Test** module for repeated connect/disconnect and playback verification.
-- A **Media Control Stress** module for AVRCP/media-key and volume automation checks.
-- An **HFP / SCO Stress** module for call-path handover verification.
-- A **Battery Monitor** module for battery-level polling and logging.
+The current app is organized around five bottom-navigation pages:
+- **Dashboard**
+- **Stress Test**
+- **Media Stress**
+- **HFP Stress**
+- **Battery**
 
-The app uses a single-activity, fragment-based structure:
+It uses a single-activity, fragment-based structure:
 - `MainActivity`
 - `DashboardFragment`
 - `StressTestFragment`
@@ -24,46 +24,65 @@ The app uses a single-activity, fragment-based structure:
 - `HfpStressFragment`
 - `BatteryMonitorFragment`
 
-## Current App Features
+## Current UI and Features
 ### 1. Dashboard
-- Scan nearby devices with **Classic + BLE** discovery.
-- Stop an active scan manually.
-- Show discovered devices in a tappable list.
-- Start pairing from the discovery list.
-- Show bonded / paired devices in a separate list.
-- Auto-select the only bonded device when there is just one candidate.
-- Display a device details card for the selected bonded device.
+The Dashboard is the main entry point for device discovery and quick checks.
 
-### 2. Device Control
-- **Connect** the selected bonded device with best-effort profile requests.
-- **Disconnect** the selected bonded device with best-effort profile requests.
-- **Unpair** the selected bonded device.
-- Launch the selected device directly into the built-in stress test page.
+UI sections:
+- **Discovery card**
+  - `BLE+Classic` scan button
+  - `Stop Scan` button
+  - discovery list for nearby devices
+- **Paired Devices card**
+  - bonded device list
+- **Device Details card**
+  - selected device name and address
+  - `Connect`
+  - `Disconnect`
+  - `Play Audio`
+  - `Raw Info`
+  - `Unpair`
+  - `Stress Test`
+  - connection status summary
+  - raw diagnostic text
+- **About card**
+
+Behavior:
+- Scans nearby devices using **Classic + BLE** discovery.
+- Lets the user pair from the discovery list.
+- Shows bonded devices in a separate list.
+- Auto-selects the only bonded device when there is only one candidate.
+- Enables quick connect / disconnect requests for the selected device.
+- Plays a generated 10-second test tone.
+- Opens the selected device directly in the Stress Test page.
+- Displays A2DP / HFP connection hints and codec summary.
 
 Important note:
 - Android does **not** provide stable public APIs for all Bluetooth profile connect/disconnect operations.
 - This app uses best-effort profile proxy calls for `A2DP` and `HEADSET/HFP`.
 - Behavior can vary by Android version, OEM build, and device policy.
 
-### 3. Audio / Codec Checks
-- Play a generated **10-second test tone** from the Dashboard.
-- Read current A2DP profile connection state.
-- Read HFP/HEADSET profile connection state.
-- **Current A2DP Codec Summary**: Displays the active codec (SBC, AAC, LDAC, etc.).
-  - **Note**: Codec reporting is **Read-Only**. Android does not allow third-party apps to change codecs programmatically due to security restrictions (requires system-level permissions).
+### 2. Stress Test
+The Stress Test page is designed for repeated playback and reconnect validation.
 
-Important note:
-- A2DP codec reporting is best-effort.
-- Some codec information depends on hidden or device-specific APIs and may return only partial data.
+UI sections:
+- target device summary
+- play duration input
+- pause interval input
+- repeat count input
+- generated audio selector
+- `Start Stress Test`
+- `Stop Test`
+- progress section with:
+  - current status
+  - loop counter
+  - progress bar
+  - timestamped test log
+  - `Copy`
+  - `Clear`
 
-### 4. Stress Test Module
-- Select a target device from the Dashboard and switch to the stress test screen.
-- Configure:
-  - play duration
-  - pause interval
-  - repeat count
-  - generated audio type
-- Run an automated loop:
+Behavior:
+- Runs an automated loop:
   1. play audio
   2. pause
   3. disconnect
@@ -71,38 +90,91 @@ Important note:
   5. connect
   6. play audio again
   7. wait before next loop
-- View live progress:
-  - current status
-  - loop counter
-  - progress bar
-  - timestamped log output
-- Copy the log to clipboard.
-- Clear the log in-app.
+- Supports different generated audio types.
+- Copies logs to clipboard.
+- Clears logs in-app.
 
-### 5. Media Control Stress (AVRCP)
-- **Manual Controls**: Send standard AVRCP commands (Play, Pause, Next, Previous, Stop).
-- **Volume Control**: Adjust system media volume (Vol+ / Vol-) directly.
-- **One-Click Tools**: Quick launch button for **Spotify** to facilitate testing.
-- **Automation Stress**:
-  - **Volume Cycle**: Ramps volume between custom limits (e.g., 20% to 70%) to test gain stability.
-  - **Rapid Commands**: Select multiple commands (Play/Pause, Next, Prev, Stop) to loop through at high frequency.
-- **Navigation Safety**: Intercepts navigation attempts if a test is running, prompting the user to stop the test before switching pages.
-- **Requirement**: Requires a background media app (like Spotify) for media key commands to take effect.
+### 3. Media Stress
+The Media Stress page focuses on AVRCP/media-key and volume automation checks.
 
-### 6. HFP / SCO Stress Test
-- **Manual SCO Control**: Manually trigger `startBluetoothSco()` and `stopBluetoothSco()` to toggle between Music (A2DP) and Call (HFP) modes.
-- **Automation Loop**: 
-  - Define custom durations for A2DP and HFP states.
-  - Repeatedly toggle profiles to verify the speaker's firmware stability during profile handovers.
-  - Monitor if the audio path correctly restores to high-quality A2DP after the "call" ends.
+UI sections:
+- page status header
+- hint banner for using a background media player
+- **Manual AVRCP Controls** card
+  - `Open Spotify`
+  - `Prev`
+  - `Play/Pause`
+  - `Next`
+  - `Stop`
+  - `Vol -`
+  - `Vol +`
+- **Automation Stress Settings** card
+  - **Volume Cycle** controls
+    - interval
+    - min %
+    - max %
+    - `Start Volume Cycle`
+  - **Rapid Commands** controls
+    - base interval
+    - random range
+    - checkboxes for Play/Pause, Next, Prev, Stop
+    - `Start Rapid Commands`
+    - `Stop Automation`
+- log card
 
-### 7. Battery Monitor
-- **Real-time Level**: Read current battery percentage (%) of the connected Bluetooth device.
-- **Battery History Logger**: Automatically poll battery levels at custom intervals (e.g., every 1 or 5 minutes).
-- **Discharge/Charge Tracking**: Useful for long-term battery life verification or charging curve analysis.
-- **Log Export**: Copy time-stamped battery data to clipboard for Excel analysis.
+Behavior:
+- Sends standard media key events.
+- Adjusts system media volume directly.
+- Can rapidly repeat selected AVRCP-style commands.
+- Can cycle volume between defined limits.
+- Requires a compatible background media player session for media-key effects to be observable.
 
-### 8. Desktop Diagnostics Tools
+### 4. HFP Stress
+The HFP Stress page focuses on SCO / call-path switching.
+
+UI sections:
+- status header
+- help banner
+- **Manual SCO Control** card
+  - `Start SCO (HFP)`
+  - `Stop SCO (A2DP)`
+- **Automation Settings** card
+  - A2DP duration input
+  - HFP duration input
+  - `Start HFP Stress Loop`
+  - `Stop Loop`
+- log card
+
+Behavior:
+- Manually requests SCO on/off.
+- Repeatedly alternates between A2DP and HFP timing windows.
+- Helps validate whether audio routing returns correctly after simulated call-mode transitions.
+
+### 5. Battery
+The Battery page focuses on battery polling and history logging.
+
+UI sections:
+- current battery card
+  - current battery percentage
+  - current target device
+- logger settings card
+  - logging interval input
+  - `Start Logging`
+  - `Stop Logging`
+- history log card
+  - battery log output
+  - `Clear`
+
+Behavior:
+- Detects a connected Bluetooth device, prioritizing A2DP-connected devices.
+- Reads battery level when available.
+- Logs battery history at a user-defined interval.
+- Supports clipboard-friendly timestamped logs for later analysis.
+
+## Navigation Safety
+If a stress-related page is running a test, the app intercepts bottom-navigation changes and asks whether the user wants to stop the running test before switching pages.
+
+## Desktop Diagnostics Tools
 The repository also includes Python helper tools under `tools/`:
 - `adb_bt_summary.py`
   - parses `adb shell dumpsys bluetooth_manager`
@@ -111,13 +183,6 @@ The repository also includes Python helper tools under `tools/`:
 - `bt_summary_gui.py`
   - desktop Tkinter viewer for the parsed Bluetooth summary
   - supports refresh and watch mode
-
-## Future Roadmap (SQA Ideas)
-- **Battery Graph**: Integration of a real-time graph view for battery discharging/charging.
-- **AVRCP Metadata**: Verification of track information (title/artist) synchronization.
-- **BLE Battery**: Reading precise battery levels via GATT Battery Service if available.
-- **Absolute Volume**: Automated testing of volume synchronization between phone and speaker.
-- **Multi-point**: Automated audio source preemptive testing between two connected agents.
 
 ## Repository Structure
 ```text
@@ -132,7 +197,8 @@ app/
     StressTestActivity.kt
   src/main/res/
     layout/
-      ...
+      fragment_dashboard.xml
+      fragment_stress_test.xml
       fragment_media_control_stress.xml
       fragment_hfp_stress.xml
       fragment_battery_monitor.xml
@@ -154,7 +220,7 @@ The repository includes a GitHub Actions workflow for test APK generation:
   - uploads the APK as a workflow artifact
   - attaches the APK to the GitHub Release asset when triggered from a release event
 
-This is intended for internal testing distribution. It currently builds an unsigned debug APK rather than a store-ready signed release APK.
+This workflow is intended for internal testing distribution. It currently builds an unsigned debug APK rather than a store-ready signed release APK.
 
 ## Requirements
 ### Android App
@@ -223,7 +289,7 @@ python3 tools/bt_summary_gui.py
 - Media key automation depends on an active background player session; without a compatible media app, AVRCP-style commands may appear to do nothing.
 - HFP / SCO behavior can vary significantly across Android devices and may be affected by OEM audio routing policies.
 - Bluetooth battery reporting is device-dependent; some speakers do not expose usable battery values to third-party apps.
-- The project currently mixes production UI code with some legacy/experimental code paths, such as `StressTestActivity`, which is not the main in-app flow.
+- The project currently mixes production UI code with some legacy or experimental code paths, such as `StressTestActivity`, which is not the main in-app flow.
 
 ## Version
 - App version: `0.00.03`

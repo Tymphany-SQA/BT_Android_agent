@@ -1,7 +1,13 @@
 package com.sam.btagent
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -20,6 +26,21 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
     private lateinit var audioManager: AudioManager
     private var isAutoTesting = false
     private var testThread: Thread? = null
+    private var focusRequest: AudioFocusRequest? = null
+
+    private val scoReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val state = intent?.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+            val stateStr = when (state) {
+                AudioManager.SCO_AUDIO_STATE_CONNECTED -> "CONNECTED"
+                AudioManager.SCO_AUDIO_STATE_CONNECTING -> "CONNECTING"
+                AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> "DISCONNECTED"
+                AudioManager.SCO_AUDIO_STATE_ERROR -> "ERROR"
+                else -> "UNKNOWN ($state)"
+            }
+            log("SCO State Changed: $stateStr")
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -34,6 +55,11 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
         super.onViewCreated(view, savedInstanceState)
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+        requireContext().registerReceiver(
+            scoReceiver,
+            IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+        )
+
         binding.btnStartSco.setOnClickListener { startSco() }
         binding.btnStopSco.setOnClickListener { stopSco() }
         binding.btnStartHfpStress.setOnClickListener { startHfpStress() }
@@ -45,17 +71,49 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
     }
 
     private fun startSco() {
+        log("Requesting SCO & Audio Focus...")
+        
+        // Request Audio Focus to stop/duck music
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener { focusChange ->
+                    log("Focus Change: $focusChange")
+                }
+                .build()
+            audioManager.requestAudioFocus(focusRequest!!)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        }
+
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         audioManager.startBluetoothSco()
         audioManager.isBluetoothScoOn = true
-        updateStatus("Manual: SCO ON (HFP)")
-        log("Manual: startBluetoothSco() called")
+        updateStatus("Manual: SCO ON (HFP Request)")
     }
 
     private fun stopSco() {
-        audioManager.stopBluetoothSco()
+        log("Stopping SCO & Releasing Focus...")
+        
+        // Abandon focus to let music resume
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(null)
+        }
+
         audioManager.isBluetoothScoOn = false
-        updateStatus("Manual: SCO OFF (A2DP)")
-        log("Manual: stopBluetoothSco() called")
+        audioManager.stopBluetoothSco()
+        audioManager.mode = AudioManager.MODE_NORMAL
+        updateStatus("Manual: SCO OFF (A2DP Request)")
     }
 
     private fun startHfpStress() {
@@ -145,6 +203,11 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
 
     override fun onDestroyView() {
         stopHfpStress()
+        try {
+            requireContext().unregisterReceiver(scoReceiver)
+        } catch (e: Exception) {
+            // Receiver not registered
+        }
         super.onDestroyView()
         _binding = null
     }

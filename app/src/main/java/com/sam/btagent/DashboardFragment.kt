@@ -147,6 +147,7 @@ class DashboardFragment : Fragment() {
         binding.unpairDeviceButton.setOnClickListener { unpairSelectedDevice() }
         binding.playTestAudioButton.setOnClickListener { playTestAudio() }
         binding.toggleDetailsButton.setOnClickListener { toggleDeviceDetails() }
+        binding.aboutCard.setOnClickListener { showAboutDialog() }
         
         binding.startStressTestButton.setOnClickListener {
             val address = selectedDeviceAddress
@@ -230,6 +231,21 @@ class DashboardFragment : Fragment() {
         stopTestAudio()
         super.onDestroyView()
         _binding = null
+    }
+
+    private fun showAboutDialog() {
+        val versionName = try {
+            val pInfo = requireActivity().packageManager.getPackageInfo(requireActivity().packageName, 0)
+            pInfo.versionName
+        } catch (e: Exception) {
+            "0.00.03"
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("About BT Agent")
+            .setMessage("© TYMPHANY SQA\nVersion: $versionName\n\nThis tool is designed for internal Bluetooth validation.")
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     private fun updateBluetoothSummary() {

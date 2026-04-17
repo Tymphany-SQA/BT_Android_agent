@@ -7,16 +7,16 @@
 **網站：** [www.tymphany.com](https://www.tymphany.com)
 
 ## 專案概述
-BT Android Agent 是一個用於 Android 12+ 裝置的藍牙喇叭驗證工具，主要用來檢查掃描、配對、連線穩定性、音訊播放與壓力測試流程。
+BT Android Agent 是一個面向 Android 12+ 裝置的藍牙驗證工具，主要用於藍牙喇叭的掃描、配對、連線穩定性、媒體控制、HFP/SCO 路徑切換與電量記錄測試。
 
-目前專案主要分成五個工作流：
-- **Dashboard**：負責掃描、配對、基本連線控制與快速音訊驗證
-- **Stress Test**：負責反覆 connect / disconnect / playback 的壓力測試
-- **Media Control Stress**：負責 AVRCP / 媒體按鍵 / 音量自動化壓力測試
-- **HFP / SCO Stress**：負責通話路徑切換與 HFP 穩定性測試
-- **Battery Monitor**：負責電量讀取與長時間記錄
+目前 app 以底部導覽列分成五個主要頁面：
+- **Dashboard**
+- **Stress Test**
+- **Media Stress**
+- **HFP Stress**
+- **Battery**
 
-App 採用單一 Activity、Fragment 導向架構：
+整體採用單一 Activity、Fragment 導向架構：
 - `MainActivity`
 - `DashboardFragment`
 - `StressTestFragment`
@@ -24,45 +24,66 @@ App 採用單一 Activity、Fragment 導向架構：
 - `HfpStressFragment`
 - `BatteryMonitorFragment`
 
-## 目前功能
+## 目前 UI 與功能
 ### 1. Dashboard
-- 支援 **Classic + BLE** 掃描附近裝置
+Dashboard 是主要入口，用來做裝置搜尋、配對與快速驗證。
+
+畫面區塊：
+- **Discovery card**
+  - `BLE+Classic`
+  - `Stop Scan`
+  - 附近裝置清單
+- **Paired Devices card**
+  - 已配對裝置清單
+- **Device Details card**
+  - 裝置名稱與位址
+  - `Connect`
+  - `Disconnect`
+  - `Play Audio`
+  - `Raw Info`
+  - `Unpair`
+  - `Stress Test`
+  - 連線狀態摘要
+  - 原始診斷資訊
+- **About card**
+
+功能：
+- 以 **Classic + BLE** 搜尋附近裝置
 - 可手動停止掃描
-- 以清單方式顯示已發現裝置
-- 可直接從發現清單發起配對
+- 可從 discovery 清單直接發起配對
 - 以獨立清單顯示已配對裝置
-- 若只有一個已配對裝置，會自動選取
-- 顯示選定裝置的詳細資訊卡片
-
-### 2. 裝置控制
-- 對選定的已配對裝置執行 **Connect**
-- 對選定的已配對裝置執行 **Disconnect**
-- 對選定的已配對裝置執行 **Unpair**
-- 直接把目前選定裝置帶入內建 Stress Test 畫面
+- 當只有一個已配對裝置時會自動選取
+- 可對選定裝置發送 connect / disconnect 請求
+- 可播放 10 秒測試音
+- 可直接把選定裝置帶入 Stress Test 頁面
+- 可顯示 A2DP / HFP 狀態與 codec 摘要
 
 注意：
-- Android 並沒有對一般 app 提供穩定公開的藍牙 profile connect/disconnect API。
-- 本 app 目前對 `A2DP` 與 `HEADSET/HFP` 使用的是 **best-effort** 方式。
-- 實際行為可能受 Android 版本、手機廠商與系統政策影響。
+- Android 並未對一般 app 提供完整穩定的藍牙 profile connect/disconnect 公開 API。
+- 本 app 對 `A2DP` 與 `HEADSET/HFP` 採用 best-effort 方式。
+- 實際行為會受到 Android 版本、手機廠商與系統政策影響。
 
-### 3. 音訊 / Codec 檢查
-- 可從 Dashboard 播放 **10 秒測試音**
-- 可讀取目前 A2DP profile 連線狀態
-- 可讀取 HFP / HEADSET profile 連線狀態
-- 可嘗試讀取目前啟用中的 A2DP codec 摘要
+### 2. Stress Test
+Stress Test 頁面用來驗證播放、斷線、重連的穩定性。
 
-注意：
-- A2DP codec 資訊也是 best-effort。
-- 有些 codec 資訊仰賴 hidden API 或裝置特定行為，可能只能拿到部分結果。
+畫面區塊：
+- 目標裝置資訊
+- 播放秒數輸入
+- 暫停秒數輸入
+- 重複次數輸入
+- 音訊類型選擇
+- `Start Stress Test`
+- `Stop Test`
+- 測試進度區
+  - 目前狀態
+  - loop 計數
+  - progress bar
+  - 含時間戳的 log
+  - `Copy`
+  - `Clear`
 
-### 4. Stress Test 模組
-- 可從 Dashboard 選定目標裝置後切換到 Stress Test 畫面
-- 可設定：
-  - 播放秒數
-  - 暫停間隔
-  - 重複次數
-  - 產生音訊類型
-- 可執行自動化測試循環：
+功能：
+- 自動執行以下測試循環：
   1. 播放音訊
   2. 暫停
   3. 斷線
@@ -70,41 +91,91 @@ App 採用單一 Activity、Fragment 導向架構：
   5. 重新連線
   6. 再次播放音訊
   7. 等待下一輪
-- 可顯示即時測試資訊：
-  - 目前狀態
-  - loop 計數
-  - progress bar
-  - 含時間戳的 log
-- 支援把 log 複製到剪貼簿
-- 支援 app 內清除 log
+- 支援不同測試音色
+- 可複製 log
+- 可清空 log
 
-### 5. Media Control Stress 模組
-- 支援手動送出標準媒體鍵：
-  - Play / Pause
-  - Next
-  - Previous
-  - Stop
-- 支援手動調整系統媒體音量（Vol+ / Vol-）
-- 支援一鍵開啟 Spotify，方便快速建立可測試的背景播放器
-- 支援兩種自動化壓力模式：
-  - **Volume Cycle**：在自訂最小/最大百分比之間循環調整音量
-  - **Rapid Commands**：以高頻率反覆送出 Play/Pause、Next、Prev、Stop 等媒體鍵
-- 若目前有測試正在執行，切換頁面時會先跳出確認視窗，避免誤切頁造成測試中斷
-- 此模組需要背景有支援媒體控制的 app（例如 Spotify），媒體鍵才會有明顯效果
+### 3. Media Stress
+Media Stress 頁面用來測試 AVRCP / 媒體鍵 / 音量自動化行為。
 
-### 6. HFP / SCO Stress 模組
-- 支援手動呼叫 `startBluetoothSco()` / `stopBluetoothSco()`
-- 可在 A2DP 與 HFP 之間反覆切換，驗證音訊路徑切換穩定性
-- 可自訂 A2DP / HFP 停留時間，持續跑切換循環
-- 適合檢查喇叭在模擬來電 / 通話結束後是否能正確回到 A2DP 高品質播放
+畫面區塊：
+- 頁首狀態列
+- 背景播放器提示區
+- **Manual AVRCP Controls** card
+  - `Open Spotify`
+  - `Prev`
+  - `Play/Pause`
+  - `Next`
+  - `Stop`
+  - `Vol -`
+  - `Vol +`
+- **Automation Stress Settings** card
+  - **Volume Cycle**
+    - interval
+    - min %
+    - max %
+    - `Start Volume Cycle`
+  - **Rapid Commands**
+    - base interval
+    - random range
+    - Play/Pause / Next / Prev / Stop 勾選項
+    - `Start Rapid Commands`
+    - `Stop Automation`
+- log card
 
-### 7. Battery Monitor 模組
-- 讀取目前連線藍牙裝置的電量百分比
-- 可設定固定間隔進行電量輪詢與記錄
-- 適合做長時間放電 / 充電曲線觀察
-- 可把帶時間戳的紀錄複製出來做進一步分析
+功能：
+- 發送標準媒體鍵事件
+- 直接調整系統媒體音量
+- 支援快速重複媒體鍵測試
+- 支援在自訂音量範圍內做循環調整
+- 需要背景有可接收媒體鍵的播放 app，效果才會明顯
 
-### 8. 桌面診斷工具
+### 4. HFP Stress
+HFP Stress 頁面用來驗證 SCO / 通話音訊路徑切換。
+
+畫面區塊：
+- 狀態列
+- 提示說明區
+- **Manual SCO Control** card
+  - `Start SCO (HFP)`
+  - `Stop SCO (A2DP)`
+- **Automation Settings** card
+  - A2DP duration
+  - HFP duration
+  - `Start HFP Stress Loop`
+  - `Stop Loop`
+- log card
+
+功能：
+- 可手動切換 SCO on/off
+- 可在 A2DP 與 HFP 模式之間做自動輪替
+- 適合驗證裝置在模擬來電與通話結束後，是否能正確回到 A2DP 路徑
+
+### 5. Battery
+Battery 頁面用來做藍牙裝置電量讀取與長時間記錄。
+
+畫面區塊：
+- 目前電量卡片
+  - 目前電量百分比
+  - 目前目標裝置
+- logger 設定卡片
+  - interval input
+  - `Start Logging`
+  - `Stop Logging`
+- history log 卡片
+  - 電量記錄輸出
+  - `Clear`
+
+功能：
+- 優先偵測 A2DP 連線中的裝置
+- 可讀取裝置電量（若裝置有提供）
+- 可依自訂間隔持續記錄電量
+- 適合做長時間放電 / 充電曲線追蹤
+
+## 導頁保護機制
+如果目前頁面正在執行測試，切換底部導覽頁面時，app 會先詢問是否停止測試，再切換頁面，避免誤切頁造成測試中斷。
+
+## 桌面診斷工具
 專案也包含 Python 工具，位於 `tools/`：
 - `adb_bt_summary.py`
   - 解析 `adb shell dumpsys bluetooth_manager`
@@ -127,7 +198,8 @@ app/
     StressTestActivity.kt
   src/main/res/
     layout/
-      ...
+      fragment_dashboard.xml
+      fragment_stress_test.xml
       fragment_media_control_stress.xml
       fragment_hfp_stress.xml
       fragment_battery_monitor.xml
@@ -149,7 +221,7 @@ tools/
   - 上傳到 Actions artifact
   - 若是由 release 事件觸發，也會自動附加到 GitHub Release asset
 
-這個流程是給內部測試分發使用，目前產出的是未簽署商店版流程之外的 debug APK，不是可直接上架的 signed release APK。
+此流程主要給內部測試分發使用，目前產出的是 debug APK，不是可直接上架的 signed release APK。
 
 ## 環境需求
 ### Android App

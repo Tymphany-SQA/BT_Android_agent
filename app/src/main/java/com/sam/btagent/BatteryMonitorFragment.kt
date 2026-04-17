@@ -1,19 +1,20 @@
 package com.sam.btagent
 
 import android.Manifest
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.os.IBinder
+import android.text.method.ScrollingMovementMethod
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -29,27 +30,43 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
     private var _binding: FragmentBatteryMonitorBinding? = null
     private val binding get() = _binding!!
 
-    private var isLogging = false
-    private val handler = Handler(Looper.getMainLooper())
-    private var logRunnable: Runnable? = null
-    
+    private var service: BatteryLoggingService? = null
+    private var isBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val localBinder = binder as BatteryLoggingService.LocalBinder
+            service = localBinder.getService()
+            isBound = true
+            
+            service?.let {
+                if (it.isLoggingActive()) {
+                    updateLoggingUI(true)
+                    binding.batteryHistoryText.text = it.getFullLog()
+                    autoScrollLog()
+                }
+                it.setLogUpdateListener { newEntry ->
+                    activity?.runOnUiThread {
+                        binding.batteryHistoryText.append(newEntry)
+                        autoScrollLog()
+                    }
+                }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            isBound = false
+            service = null
+        }
+    }
+
     private var targetDevice: BluetoothDevice? = null
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == BluetoothDevice.ACTION_BATTERY_LEVEL_CHANGED) {
-                val level = intent.getIntExtra(BluetoothDevice.EXTRA_BATTERY_LEVEL, -1)
-                val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                }
-                
-                if (device?.address == targetDevice?.address) {
-                    log("Broadcast received: $level%")
-                    updateCurrentBatteryUI(level)
-                }
+            if (intent?.action == "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED") {
+                val level = intent.getIntExtra("android.bluetooth.device.extra.BATTERY_LEVEL", -1)
+                updateCurrentBatteryUI(level)
             }
         }
     }
@@ -66,17 +83,25 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        binding.batteryHistoryText.movementMethod = ScrollingMovementMethod()
         findConnectedDevice()
 
         binding.btnStartBatteryLog.setOnClickListener { startLogging() }
         binding.btnStopBatteryLog.setOnClickListener { stopLogging() }
         binding.btnClearBatteryLog.setOnClickListener {
             binding.batteryHistoryText.text = ""
-            log("Log cleared.")
         }
 
-        val filter = IntentFilter(BluetoothDevice.ACTION_BATTERY_LEVEL_CHANGED)
-        requireContext().registerReceiver(bluetoothReceiver, filter)
+        val intent = Intent(requireContext(), BatteryLoggingService::class.java)
+        requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+
+        val filter = IntentFilter("android.bluetooth.device.action.BATTERY_LEVEL_CHANGED")
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.RECEIVER_EXPORTED
+        } else {
+            0
+        }
+        requireContext().registerReceiver(bluetoothReceiver, filter, flags)
     }
 
     private fun findConnectedDevice() {
@@ -86,13 +111,21 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.BLUETOOTH_CONNECT) 
             != PackageManager.PERMISSION_GRANTED) return
 
-        // Check A2DP connected devices as priority
         adapter.getProfileProxy(requireContext(), object : BluetoothProfile.ServiceListener {
             override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
                 val connected = proxy.connectedDevices
                 if (connected.isNotEmpty()) {
                     targetDevice = connected[0]
-                    binding.targetDeviceName.text = "Device: ${targetDevice?.name ?: targetDevice?.address}"
+                    val deviceName = try {
+                        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                            targetDevice?.name ?: targetDevice?.address
+                        } else {
+                            targetDevice?.address
+                        }
+                    } catch (e: SecurityException) {
+                        targetDevice?.address
+                    }
+                    binding.targetDeviceName.text = "Device: $deviceName"
                     refreshBatteryNow()
                 }
                 adapter.closeProfileProxy(profile, proxy)
@@ -110,7 +143,6 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun readBatteryLevel(device: BluetoothDevice): Int {
         return try {
-            // Use reflection for older versions if needed, but getBatteryLevel is public in modern SDKs
             val method = device.javaClass.getMethod("getBatteryLevel")
             method.invoke(device) as Int
         } catch (e: Exception) {
@@ -124,60 +156,47 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
     }
 
     private fun startLogging() {
+        val device = targetDevice ?: return
         val intervalSec = binding.batteryIntervalInput.text.toString().toLongOrNull() ?: 60L
         if (intervalSec < 1) return
 
-        isLogging = true
-        binding.btnStartBatteryLog.visibility = View.GONE
-        binding.btnStopBatteryLog.visibility = View.VISIBLE
-        binding.batteryIntervalInput.isEnabled = false
-
-        log("Starting Battery Log (Interval: ${intervalSec}s)...")
+        val intent = Intent(requireContext(), BatteryLoggingService::class.java)
+        ContextCompat.startForegroundService(requireContext(), intent)
         
-        logRunnable = object : Runnable {
-            override fun run() {
-                if (!isLogging) return
-                
-                targetDevice?.let { device ->
-                    val level = readBatteryLevel(device)
-                    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    val entry = "[$time] Battery: ${if (level >= 0) "$level%" else "Unknown"}\n"
-                    
-                    binding.batteryHistoryText.append(entry)
-                    updateCurrentBatteryUI(level)
-                } ?: run {
-                    binding.batteryHistoryText.append("[${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}] No device connected\n")
-                    findConnectedDevice()
-                }
-                
-                handler.postDelayed(this, intervalSec * 1000)
-            }
-        }
-        handler.post(logRunnable!!)
+        service?.startLogging(device, intervalSec)
+        updateLoggingUI(true)
     }
 
     private fun stopLogging() {
-        isLogging = false
-        logRunnable?.let { handler.removeCallbacks(it) }
-        binding.btnStartBatteryLog.visibility = View.VISIBLE
-        binding.btnStopBatteryLog.visibility = View.GONE
-        binding.batteryIntervalInput.isEnabled = true
-        log("Logging stopped.")
+        service?.stopLogging()
+        updateLoggingUI(false)
     }
 
-    private fun log(message: String) {
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        binding.batteryHistoryText.append("[$time] $message\n")
+    private fun updateLoggingUI(active: Boolean) {
+        binding.btnStartBatteryLog.visibility = if (active) View.GONE else View.VISIBLE
+        binding.btnStopBatteryLog.visibility = if (active) View.VISIBLE else View.GONE
+        binding.batteryIntervalInput.isEnabled = !active
     }
 
-    override fun isTestRunning(): Boolean = isLogging
-
-    override fun stopTest() {
-        stopLogging()
+    private fun autoScrollLog() {
+        val scrollAmount = binding.batteryHistoryText.layout?.let {
+            it.lineCount * binding.batteryHistoryText.lineHeight - binding.batteryHistoryText.height
+        } ?: 0
+        if (scrollAmount > 0) {
+            binding.batteryHistoryText.scrollTo(0, scrollAmount)
+        }
     }
+
+    override fun isTestRunning(): Boolean = false
+
+    override fun stopTest() {}
 
     override fun onDestroyView() {
-        stopLogging()
+        if (isBound) {
+            service?.setLogUpdateListener { }
+            requireContext().unbindService(serviceConnection)
+            isBound = false
+        }
         try {
             requireContext().unregisterReceiver(bluetoothReceiver)
         } catch (e: Exception) {}
