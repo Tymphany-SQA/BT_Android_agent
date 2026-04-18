@@ -40,6 +40,11 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
     private var testThread: Thread? = null
     private var activeAudioTrack: AudioTrack? = null
 
+    // KPI Tracking
+    private val connectionTimes = mutableListOf<Long>()
+    private var connectionAttempts = 0
+    private var connectionSuccesses = 0
+
     private enum class AudioType(val label: String) {
         SOFT_PIANO("Soft Piano (Gentle)"),
         ZEN_BELLS("Zen Bells (Quiet)"),
@@ -90,6 +95,8 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         
         binding.copyLogButton.setOnClickListener { copyLogToClipboard() }
         binding.clearLogButton.setOnClickListener { clearLog() }
+
+        resetKpiUI()
     }
 
     private fun startStressTest() {
@@ -156,6 +163,11 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         val selectedAudio = AudioType.values()[binding.audioSelector.selectedItemPosition]
 
         isTesting = true
+        connectionTimes.clear()
+        connectionAttempts = 0
+        connectionSuccesses = 0
+        resetKpiUI()
+
         activity?.runOnUiThread {
             binding.startTestButton.isEnabled = false
             binding.stopTestButton.isEnabled = true
@@ -185,6 +197,7 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
                     runLoopStep(i, playSec, pauseSec, selectedAudio)
                 }
                 log("Stress test completed successfully.")
+                activity?.runOnUiThread { logFinalKpi() }
             } catch (e: InterruptedException) {
                 log("Test manually stopped.")
             } catch (e: Exception) {
@@ -229,11 +242,34 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         updateStatus("Pause after disconnect ($pauseSec s)")
         interruptibleSleep(pauseSec)
         
-        // 5. Connect
+        // 5. Connect (With KPI Tracking)
         if (!isTesting) return
         updateStatus("Action: Connect")
-        performConnectionAction(connect = true)
-        interruptibleSleep(pauseSec + 5)
+        val connectStartTime = System.currentTimeMillis()
+        connectionAttempts++
+        
+        var connected = false
+        performConnectionAction(connect = true) { success ->
+            if (success) {
+                val duration = System.currentTimeMillis() - connectStartTime
+                connectionTimes.add(duration)
+                connectionSuccesses++
+                activity?.runOnUiThread { updateKpiUI() }
+                log("Connection KPI: $duration ms")
+            } else {
+                log("Connection failed or timed out")
+            }
+            connected = true
+        }
+        
+        // Wait for connection to finish or timeout (max 15s)
+        val waitStart = System.currentTimeMillis()
+        while (!connected && System.currentTimeMillis() - waitStart < 15000) {
+            if (!isTesting) break
+            Thread.sleep(200)
+        }
+        
+        interruptibleSleep(pauseSec)
         
         // 6. Play music again
         if (!isTesting) return
@@ -257,14 +293,17 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun log(message: String) {
         val timeStamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        activity?.runOnUiThread {
-            binding.testLogText.append("[$timeStamp] $message\n")
-            val scrollAmount = binding.testLogText.layout?.let { 
-                it.getLineTop(binding.testLogText.lineCount) - binding.testLogText.height 
-            } ?: 0
-            if (scrollAmount > 0) {
-                binding.testLogText.scrollTo(0, scrollAmount)
+        activity?.let { act ->
+            act.runOnUiThread {
+                binding.testLogText.append("[$timeStamp] $message\n")
+                val scrollAmount = binding.testLogText.layout?.let { 
+                    it.getLineTop(binding.testLogText.lineCount) - binding.testLogText.height 
+                } ?: 0
+                if (scrollAmount > 0) {
+                    binding.testLogText.scrollTo(0, scrollAmount)
+                }
             }
+            LogPersistenceManager.persistLog(act.applicationContext, "StressTest", message)
         }
     }
 
@@ -277,38 +316,97 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         }
     }
 
-    private fun performConnectionAction(connect: Boolean) {
+    private fun performConnectionAction(connect: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
         val address = targetDeviceAddress ?: return
         val context = context ?: return
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         val device = adapter.getRemoteDevice(address)
         
-        val profiles = listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET)
+        // For KPI, we focus on A2DP as the primary audio indicator
+        val profileId = BluetoothProfile.A2DP
         
-        profiles.forEach { profileId ->
-            adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
-                override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
-                    try {
-                        val methodName = if (connect) "connect" else "disconnect"
-                        val method = proxy.javaClass.getMethod(methodName, BluetoothDevice::class.java)
-                        method.isAccessible = true
-                        val result = method.invoke(proxy, device) as? Boolean ?: false
-                        log("${profileName(id)} ${if (connect) "Connect" else "Disconnect"} sent: $result")
-                    } catch (e: Exception) {
-                        log("${profileName(id)} action failed: ${e.message}")
-                    } finally {
+        adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
+            override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
+                try {
+                    val methodName = if (connect) "connect" else "disconnect"
+                    val method = proxy.javaClass.getMethod(methodName, BluetoothDevice::class.java)
+                    method.isAccessible = true
+                    val result = method.invoke(proxy, device) as? Boolean ?: false
+                    
+                    if (connect && result) {
+                        // Polling for connection state
+                        Thread {
+                            var success = false
+                            val pollStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - pollStart < 12000) { // 12s timeout
+                                if (proxy.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED) {
+                                    success = true
+                                    break
+                                }
+                                Thread.sleep(100)
+                            }
+                            onComplete?.invoke(success)
+                            adapter.closeProfileProxy(id, proxy)
+                        }.start()
+                    } else {
+                        log("${profileName(id)} ${if (connect) "Connect" else "Disconnect"} call: $result")
+                        onComplete?.invoke(result && !connect) // Disconnect always "succeeds" if call returns true
                         adapter.closeProfileProxy(id, proxy)
                     }
+                } catch (e: Exception) {
+                    log("${profileName(id)} action failed: ${e.message}")
+                    onComplete?.invoke(false)
+                    adapter.closeProfileProxy(id, proxy)
                 }
-                override fun onServiceDisconnected(id: Int) {}
-            }, profileId)
-        }
+            }
+            override fun onServiceDisconnected(id: Int) {}
+        }, profileId)
     }
 
     private fun profileName(id: Int) = when(id) {
         BluetoothProfile.A2DP -> "A2DP"
         BluetoothProfile.HEADSET -> "HFP"
         else -> "Profile $id"
+    }
+
+    private fun resetKpiUI() {
+        activity?.runOnUiThread {
+            binding.tvKpiAvg.text = getString(R.string.kpi_avg_none)
+            binding.tvKpiSuccessRate.text = getString(R.string.kpi_success_rate_none)
+            binding.tvKpiMinMax.text = getString(R.string.kpi_min_max_none)
+            binding.tvKpiP90.text = getString(R.string.kpi_p90_none)
+        }
+    }
+
+    private fun updateKpiUI() {
+        if (connectionTimes.isEmpty()) return
+        
+        val avg = connectionTimes.average().toLong()
+        val min = connectionTimes.minOrNull() ?: 0
+        val max = connectionTimes.maxOrNull() ?: 0
+        
+        val sorted = connectionTimes.sorted()
+        val p90Index = (sorted.size * 0.9).toInt().coerceAtMost(sorted.size - 1)
+        val p90 = sorted[p90Index]
+
+        binding.tvKpiAvg.text = getString(R.string.kpi_avg_format, avg)
+        binding.tvKpiSuccessRate.text = getString(R.string.kpi_success_rate_format, connectionSuccesses, connectionAttempts)
+        binding.tvKpiMinMax.text = getString(R.string.kpi_min_max_format, min.toInt(), max.toInt())
+        binding.tvKpiP90.text = getString(R.string.kpi_p90_format, p90.toInt())
+    }
+
+    private fun logFinalKpi() {
+        if (connectionTimes.isEmpty()) return
+        log("=== Final KPI Summary ===")
+        log("Total Attempts: $connectionAttempts")
+        log("Success Count: $connectionSuccesses")
+        log("Average Time: ${connectionTimes.average().toInt()} ms")
+        log("Min Time: ${connectionTimes.minOrNull()} ms")
+        log("Max Time: ${connectionTimes.maxOrNull()} ms")
+        val sorted = connectionTimes.sorted()
+        val p90 = sorted[(sorted.size * 0.9).toInt().coerceAtMost(sorted.size - 1)]
+        log("P90 Time: $p90 ms")
+        log("=========================")
     }
 
     private fun playGeneratedAudio(durationSec: Int, type: AudioType) {

@@ -146,19 +146,8 @@ class DashboardFragment : Fragment() {
         binding.disconnectDeviceButton.setOnClickListener { requestDeviceConnection(connect = false) }
         binding.unpairDeviceButton.setOnClickListener { unpairSelectedDevice() }
         binding.playTestAudioButton.setOnClickListener { playTestAudio() }
-        binding.btnHfpStress.setOnClickListener {
-            (activity as? MainActivity)?.switchToHfpStress()
-        }
         binding.toggleDetailsButton.setOnClickListener { toggleDeviceDetails() }
         binding.aboutCard.setOnClickListener { showAboutDialog() }
-        
-        binding.startStressTestButton.setOnClickListener {
-            val address = selectedDeviceAddress
-            if (address != null) {
-                val device = bondedDevices[address]
-                (activity as? MainActivity)?.switchToStressTest(address, device?.name ?: "Unknown")
-            }
-        }
 
         val smartScrollListener = View.OnTouchListener { v, event ->
             val canScroll = v.canScrollVertically(1) || v.canScrollVertically(-1)
@@ -217,7 +206,7 @@ class DashboardFragment : Fragment() {
             val pInfo = requireContext().packageManager.getPackageInfo(requireContext().packageName, 0)
             pInfo.versionName
         } catch (e: Exception) {
-            "0.00.06"
+            "0.00.07"
         }
         binding.versionNumberText.text = "v$versionName"
     }
@@ -241,7 +230,7 @@ class DashboardFragment : Fragment() {
             val pInfo = requireActivity().packageManager.getPackageInfo(requireActivity().packageName, 0)
             pInfo.versionName
         } catch (e: Exception) {
-            "0.00.06"
+            "0.00.07"
         }
 
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
@@ -437,7 +426,6 @@ class DashboardFragment : Fragment() {
         binding.connectDeviceButton.isEnabled = !isFullyConnected
         binding.disconnectDeviceButton.isEnabled = isAnyConnected
         binding.playTestAudioButton.isEnabled = isA2dpConnected
-        binding.startStressTestButton.isEnabled = true
     }
 
     private fun toggleDeviceDetails() {

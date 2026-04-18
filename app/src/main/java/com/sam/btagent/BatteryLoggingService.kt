@@ -186,6 +186,12 @@ class BatteryLoggingService : Service() {
         val entry = if (message.startsWith("[")) message else "[$time] $message"
         logHistory.append(entry).append("\n")
         onLogUpdateListener?.invoke(entry + "\n")
+        
+        // Persist to CSV
+        targetDevice?.let { device ->
+            val level = readBatteryLevel(device)
+            LogPersistenceManager.persistBatteryLog(this, device.address, level, lastKnownRssi)
+        }
     }
 
     private fun readBatteryLevel(device: BluetoothDevice): Int {

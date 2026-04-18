@@ -2,6 +2,11 @@ name: Build Test APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
   release:
     types:
       - published
@@ -34,9 +39,9 @@ jobs:
         run: |
           mkdir -p dist
           if [ "${{ github.event_name }}" = "release" ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk "dist/BT_Android_agent-${{ github.event.release.tag_name }}-debug.apk"
+            cp app/build/outputs/apk/debug/app-debug.apk "dist/BT_Android_Agent2-${{ github.event.release.tag_name }}-debug.apk"
           else
-            cp app/build/outputs/apk/debug/app-debug.apk "dist/BT_Android_agent-debug.apk"
+            cp app/build/outputs/apk/debug/app-debug.apk "dist/BT_Android_Agent2-debug.apk"
           fi
 
       - name: Upload workflow artifact

@@ -1,4 +1,4 @@
-# BT Android Agent
+# BT Android Agent 2
 
 [中文版本 / Chinese version](./README.zh-TW.md)
 
@@ -7,16 +7,18 @@
 **Website:** [www.tymphany.com](https://www.tymphany.com)
 
 ## Overview
-BT Android Agent is an Android 12+ Bluetooth validation tool for speaker testing.
+BT Android Agent 2 is an Android 12+ Bluetooth validation tool for speaker testing.
 
-The current app is organized around five bottom-navigation pages:
-- **Dashboard**
-- **Stress Test**
-- **Media**
-- **Battery**: Background-capable battery and signal strength (RSSI) monitor.
+The current app is organized around a side navigation drawer with several test pages:
+- **Dashboard**: Device discovery, pairing, and status overview.
+- **Stress Test**: Automated A2DP connect/disconnect/play loops with connection KPI (latency, success rate) tracking and **CSV log persistence**.
+- **Media**: AVRCP media-key and volume cycle automation.
+- **HFP / SCO Stress**: Manual and automated A2DP to HFP (call mode) switching.
+- **Battery**: Background-capable battery and signal strength (RSSI) monitor with **structured CSV export**.
 - **Acoustic**: Real-time 1kHz loopback test for audio continuity and frequency validation.
-
-In addition, the Dashboard provides a direct shortcut into **HFP Stress** for SCO / call-path validation.
+- **Volume Linearity**: Automatic 16-step (0-15) volume gain consistency check.
+- **Audio Latency**: End-to-end latency measurement using frequency switching (1kHz to 2kHz).
+- **About**: Dedicated page for version info and project description.
 
 It uses a single-activity, fragment-based structure:
 - `MainActivity`
@@ -26,6 +28,9 @@ It uses a single-activity, fragment-based structure:
 - `HfpStressFragment`
 - `BatteryMonitorFragment` (Communicates with `BatteryLoggingService`)
 - `AcousticLoopbackFragment` (Tone Generator + Real-time Goertzel Analysis)
+- `VolumeLinearityFragment` (Automated Volume Step Analysis)
+- `AudioLatencyFragment` (Frequency-switching Latency Measurement)
+- `AboutFragment` (Project Information)
 
 ## Current UI and Features
 ### 1. Dashboard
@@ -45,10 +50,9 @@ UI sections:
   - `Play Audio`
   - `Raw Info`
   - `Unpair`
-  - `Stress Test`
-  - `HFP Stress`
   - connection status summary
   - raw diagnostic text
+  - app version display in the page header
 - **About card**
 
 Behavior:
@@ -58,8 +62,6 @@ Behavior:
 - Auto-selects the only bonded device when there is only one candidate.
 - Enables quick connect / disconnect requests for the selected device.
 - Plays a generated 10-second test tone.
-- Opens the selected device directly in the Stress Test page.
-- Opens HFP Stress directly from the device details area.
 - Displays A2DP / HFP connection hints and codec summary.
 
 Important note:
@@ -78,6 +80,11 @@ UI sections:
 - generated audio selector
 - `Start Stress Test`
 - `Stop Test`
+- **Connection KPI** card
+  - Average
+  - Success rate
+  - Min / Max
+  - P90
 - progress section with:
   - current status
   - loop counter
@@ -92,9 +99,15 @@ Behavior:
   2. pause
   3. disconnect
   4. pause
-  5. connect
+  5. connect (and measure connection time)
   6. play audio again
   7. wait before next loop
+- **Log Persistence**: Automated logging to CSV files in the phone's `Downloads/BT_Android_Agent_Logs/` directory for Stress Test and Battery monitoring.
+- **Connection KPI Tracking**:
+  - Measures the time from `connect()` command to `STATE_CONNECTED`.
+  - Calculates real-time statistics: **Average**, **Min/Max**, and **90th Percentile (P90)**.
+  - Tracks connection success rate.
+  - Logs a final KPI summary at the end of the test.
 - Supports different generated audio types.
 - Copies logs to clipboard.
 - Clears logs in-app.
@@ -156,40 +169,38 @@ Behavior:
 - Helps validate whether audio routing returns correctly after simulated call-mode transitions.
 
 Entry point:
-- This page is opened from the Dashboard `HFP Stress` button rather than from bottom navigation.
+- This page is accessed via the side navigation drawer.
 
 ### 5. Battery
 The Battery page focuses on long-term battery polling and signal stability logging.
 
 UI sections:
-- **Current Battery & Signal** card
+- **Current status** card
   - current battery percentage
   - current RSSI (dBm) strength
   - current target device
-- **Logger Settings** card
+- **Logger settings** card
   - logging interval input
   - `Start Logging` (Starts a Foreground Service)
   - `Stop Logging`
 - **History Log** card
   - battery and RSSI log output with timestamps
-  - auto-scrolling log view
   - `Clear`
 
 Behavior:
+- **Automatic CSV Logging**: All battery and RSSI data is automatically saved to `Downloads/BT_Android_Agent_Logs/BatteryLog_YYYYMMDD.csv`.
 - **Foreground Service**: Uses `BatteryLoggingService` to continue polling even when the app is in the background or the screen is off.
-- **RSSI Tracking**: Automatically triggers a short discovery during each poll to capture signal strength (RSSI) of the connected device.
+- **RSSI Tracking**: Tries GATT RSSI first and falls back to short discovery scans when needed.
 - **Event Monitoring**: Logs ACL connection/disconnection events in real-time.
 - **Battery Fallback Paths**: Tries the platform battery API first, then falls back to BLE GATT Battery Service reads when the device exposes them.
-- **Auto-Scroll**: The history log automatically scrolls to the latest entry unless manually scrolled by the user.
-- Supports clipboard-friendly timestamped logs for later analysis.
+- Keeps a timestamped on-screen history while the logger is active.
 
 ### 6. Acoustic
 The Acoustic page provides a simple speaker-to-microphone loopback check using a generated 1kHz tone and real-time microphone analysis.
 
 UI sections:
 - **Tone Generator (1kHz)** card
-  - `Start 1kHz Tone`
-  - `Stop 1kHz Tone`
+  - single toggle button that switches between `Start 1kHz Tone` and `Stop 1kHz Tone`
 - **Real-time Monitor** card
   - input level progress bar
   - 1kHz detection status badge
@@ -204,8 +215,50 @@ Behavior:
 - Shows `DETECTED` / `NO TONE` state changes and records transitions in the event log.
 - Stops playback and monitoring automatically when the page is closed.
 
+### 7. Volume Linearity
+The Volume Linearity page automates the process of checking gain consistency across the standard 16 Android media volume steps (0-15).
+
+UI sections:
+- **Test Controls** card
+  - `Start Linearity Test`
+  - `Stop`
+- **Progress** card
+  - current step (0-15)
+  - progress bar
+  - last measured magnitude
+- **Test Results & Log** card
+  - timestamped step results
+
+Behavior:
+- Automatically cycles through volume levels 0 to 15.
+- Plays a 1kHz tone at each step for a fixed duration (2 seconds).
+- Measures the received magnitude using the microphone.
+- Logs results for each step to help identify "dead steps" (where volume doesn't change) or non-linear gain jumps.
+
+### 8. Audio Latency
+The Audio Latency page measures the end-to-end delay from the moment the phone's `AudioTrack` changes frequency to the moment the `AudioRecord` detects that change through the microphone.
+
+UI sections:
+- **Test Controls** card
+  - `Start Latency Test`
+  - `Stop`
+- **Result Display**
+  - Average latency value after 5 rounds
+- **Event Log**
+  - Detailed round-by-round results and timestamps
+
+Behavior:
+1. Runs **5 consecutive rounds** of latency measurement to ensure statistical accuracy.
+2. Each round:
+    - Plays a steady **1kHz** reference tone to stabilize the Bluetooth A2DP link.
+    - Switches the frequency to **2kHz** and records the precise system timestamp.
+    - Uses a Goertzel filter to detect the 2kHz arrival via the microphone.
+    - Calculates the latency for that round.
+3. After 5 rounds, it calculates and displays the **average latency**.
+4. This multi-round approach helps filter out transient system jitters and provides a more reliable assessment of the Bluetooth audio path.
+
 ## Navigation Safety
-If a stress-related page is running a test, the app intercepts bottom-navigation changes and asks whether the user wants to stop the running test before switching pages.
+If a stress-related page is running a test, the app intercepts side-drawer navigation changes and asks whether the user wants to stop the running test before switching pages.
 
 ## Desktop Diagnostics Tools
 The repository also includes Python helper tools under `tools/`:
@@ -219,6 +272,9 @@ The repository also includes Python helper tools under `tools/`:
 
 ## Repository Structure
 ```text
+.github/
+  workflows/
+    build-test-apk.yml
 app/
   src/main/java/com/sam/btagent/
     MainActivity.kt
@@ -228,7 +284,11 @@ app/
     HfpStressFragment.kt
     BatteryMonitorFragment.kt
     BatteryLoggingService.kt
+    LogPersistenceManager.kt
     AcousticLoopbackFragment.kt
+    VolumeLinearityFragment.kt
+    AudioLatencyFragment.kt
+    AboutFragment.kt
   src/main/res/
     layout/
       fragment_dashboard.xml
@@ -237,8 +297,13 @@ app/
       fragment_hfp_stress.xml
       fragment_battery_monitor.xml
       fragment_acoustic_loopback.xml
+      fragment_volume_linearity.xml
+      fragment_audio_latency.xml
+      fragment_about.xml
+      nav_header.xml
     values/
     menu/
+      nav_drawer_menu.xml
 tools/
   adb_bt_summary.py
   bt_summary_gui.py
@@ -268,9 +333,13 @@ This workflow is intended for internal testing distribution. It currently builds
 - `BLUETOOTH_SCAN`
 - `BLUETOOTH_CONNECT`
 - `ACCESS_FINE_LOCATION`
+- `ACCESS_COARSE_LOCATION`
 - `MODIFY_AUDIO_SETTINGS`
 - `RECORD_AUDIO`
 - `BLUETOOTH_ADVERTISE`
+- `FOREGROUND_SERVICE`
+- `FOREGROUND_SERVICE_CONNECTED_DEVICE`
+- `POST_NOTIFICATIONS`
 
 Manifest also declares:
 - Classic Bluetooth support
@@ -286,14 +355,14 @@ Manifest also declares:
 
 ### Command Line
 ```bash
-cd /Users/sam/code/BT_Android_agent
+cd /Users/sam/code/BT_Android_Agent2
 ./gradlew :app:assembleDebug
 ```
 
 ## Desktop Tool Usage
 ### ADB Summary Script
 ```bash
-cd /Users/sam/code/BT_Android_agent
+cd /Users/sam/code/BT_Android_Agent2
 
 # basic summary
 python3 tools/adb_bt_summary.py
@@ -313,7 +382,7 @@ python3 tools/adb_bt_summary.py --metadata-only
 
 ### GUI Summary Panel
 ```bash
-cd /Users/sam/code/BT_Android_agent
+cd /Users/sam/code/BT_Android_Agent2
 python3 tools/bt_summary_gui.py
 ```
 
@@ -327,4 +396,4 @@ python3 tools/bt_summary_gui.py
 - Acoustic loopback detection depends on speaker volume, microphone gain, device acoustics, and environmental noise; threshold tuning may be needed across devices.
 
 ## Version
-- App version: `0.00.06`
+- App version: `0.00.07`

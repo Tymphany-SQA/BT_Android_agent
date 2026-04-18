@@ -9,7 +9,7 @@ from pathlib import Path
 from tkinter import ttk
 
 
-ROOT = Path("/Users/sam/code/BT_Android_agent")
+ROOT = Path("/Users/sam/code/BT_Android_Agent2")
 SUMMARY_SCRIPT = ROOT / "tools" / "adb_bt_summary.py"
 
 

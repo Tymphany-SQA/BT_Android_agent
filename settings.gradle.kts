@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BT_Android_agent"
+rootProject.name = "BT_Android_Agent2"
 include(":app")

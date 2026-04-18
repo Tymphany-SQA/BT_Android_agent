@@ -33,7 +33,7 @@
                 android:layout_alignBottom="@id/appTitle"
                 android:layout_marginStart="8dp"
                 android:layout_toEndOf="@id/appTitle"
-                android:text="v0.00.06"
+                android:text="v0.00.07"
                 android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
                 android:textColor="?android:attr/textColorSecondary" />
         </RelativeLayout>
@@ -203,24 +203,6 @@
                         android:layout_columnWeight="1"
                         android:layout_marginTop="4dp"
                         android:text="Unpair" />
-
-                    <Button
-                        android:id="@+id/startStressTestButton"
-                        style="@style/Widget.Material3.Button.TonalButton"
-                        android:layout_width="0dp"
-                        android:layout_columnWeight="1"
-                        android:layout_marginStart="4dp"
-                        android:layout_marginTop="4dp"
-                        android:text="Stress Test" />
-
-                    <Button
-                        android:id="@+id/btnHfpStress"
-                        style="@style/Widget.Material3.Button.TonalButton"
-                        android:layout_width="0dp"
-                        android:layout_columnWeight="1"
-                        android:layout_columnSpan="2"
-                        android:layout_marginTop="4dp"
-                        android:text="HFP / SCO Stress" />
                 </GridLayout>
 
                 <TextView

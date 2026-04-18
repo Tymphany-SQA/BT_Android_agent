@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:checkableBehavior="single">
+        <item
+            android:id="@+id/nav_dashboard"
+            android:icon="@android:drawable/ic_menu_info_details"
+            android:title="Dashboard" />
+        <item
+            android:id="@+id/nav_stress_test"
+            android:icon="@android:drawable/ic_menu_recent_history"
+            android:title="Stress Test" />
+        <item
+            android:id="@+id/nav_media_control"
+            android:icon="@android:drawable/ic_menu_slideshow"
+            android:title="Media Control" />
+        <item
+            android:id="@+id/nav_hfp_stress"
+            android:icon="@android:drawable/ic_menu_call"
+            android:title="HFP / SCO Stress" />
+        <item
+            android:id="@+id/nav_battery_monitor"
+            android:icon="@android:drawable/ic_lock_idle_low_battery"
+            android:title="Battery Monitor" />
+        <item
+            android:id="@+id/nav_acoustic_loopback"
+            android:icon="@android:drawable/ic_btn_speak_now"
+            android:title="Acoustic Loopback" />
+        <item
+            android:id="@+id/nav_volume_linearity"
+            android:icon="@android:drawable/ic_menu_sort_by_size"
+            android:title="Volume Linearity" />
+        <item
+            android:id="@+id/nav_audio_latency"
+            android:icon="@android:drawable/ic_menu_recent_history"
+            android:title="@string/nav_audio_latency" />
+    </group>
+
+    <item android:title="Support">
+        <menu>
+            <item
+                android:id="@+id/nav_about"
+                android:icon="@android:drawable/ic_menu_info_details"
+                android:title="About" />
+        </menu>
+    </item>
+</menu>

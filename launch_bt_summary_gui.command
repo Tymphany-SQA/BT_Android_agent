@@ -2,5 +2,5 @@
 
 set -euo pipefail
 
-cd /Users/sam/code/BT_Android_agent
-python3 /Users/sam/code/BT_Android_agent/tools/bt_summary_gui.py
+cd /Users/sam/code/BT_Android_agent2
+python3 /Users/sam/code/BT_Android_agent2/tools/bt_summary_gui.py

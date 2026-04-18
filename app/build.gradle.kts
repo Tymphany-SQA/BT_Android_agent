@@ -11,8 +11,8 @@ android {
         applicationId = "com.sam.btagent"
         minSdk = 31
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.00.06"
+        versionCode = 7
+        versionName = "0.00.07"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -184,16 +184,19 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun log(message: String) {
         val timeStamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        activity?.runOnUiThread {
-            if (_binding != null) {
-                binding.hfpLogText.append("[$timeStamp] $message\n")
-                val scrollAmount = binding.hfpLogText.layout?.let {
-                    it.getLineTop(binding.hfpLogText.lineCount) - binding.hfpLogText.height
-                } ?: 0
-                if (scrollAmount > 0) {
-                    binding.hfpLogText.scrollTo(0, scrollAmount)
+        activity?.let { act ->
+            act.runOnUiThread {
+                if (_binding != null) {
+                    binding.hfpLogText.append("[$timeStamp] $message\n")
+                    val scrollAmount = binding.hfpLogText.layout?.let {
+                        it.getLineTop(binding.hfpLogText.lineCount) - binding.hfpLogText.height
+                    } ?: 0
+                    if (scrollAmount > 0) {
+                        binding.hfpLogText.scrollTo(0, scrollAmount)
+                    }
                 }
             }
+            LogPersistenceManager.persistLog(act.applicationContext, "HFP_Stress", message)
         }
     }
 
