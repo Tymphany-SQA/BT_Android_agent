@@ -33,6 +33,10 @@
             android:id="@+id/nav_audio_latency"
             android:icon="@android:drawable/ic_menu_recent_history"
             android:title="@string/nav_audio_latency" />
+        <item
+            android:id="@+id/nav_log_viewer"
+            android:icon="@android:drawable/ic_menu_agenda"
+            android:title="Log Explorer" />
     </group>
 
     <item android:title="Support">

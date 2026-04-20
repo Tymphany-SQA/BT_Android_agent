@@ -82,4 +82,8 @@
     <string name="kpi_success_rate_none">Success: 0/0</string>
     <string name="kpi_min_max_none">Min/Max: - / - ms</string>
     <string name="kpi_p90_none">P90: - ms</string>
+    <string name="rapid_test_progress_label">Rapid Test: %1$d / %2$s</string>
+    <string name="rapid_test_loop_label">Rapid Loop: %1$d / %2$s</string>
+    <string name="rapid_test_start_log">Starting Rapid Media Test: %1$s</string>
+    <string name="rapid_test_non_stop">Non-stop</string>
 </resources>

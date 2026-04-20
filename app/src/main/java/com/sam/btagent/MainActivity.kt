@@ -77,6 +77,7 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
             R.id.nav_acoustic_loopback -> AcousticLoopbackFragment()
             R.id.nav_volume_linearity -> VolumeLinearityFragment()
             R.id.nav_audio_latency -> AudioLatencyFragment()
+            R.id.nav_log_viewer -> LogViewerFragment()
             R.id.nav_about -> AboutFragment()
             else -> DashboardFragment()
         }
@@ -90,6 +91,7 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
             R.id.nav_acoustic_loopback -> "Acoustic Loopback"
             R.id.nav_volume_linearity -> "Volume Linearity"
             R.id.nav_audio_latency -> "Audio Latency"
+            R.id.nav_log_viewer -> "Log Explorer"
             R.id.nav_about -> "About"
             else -> "BT Agent"
         }

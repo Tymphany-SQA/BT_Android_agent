@@ -4,9 +4,7 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothHeadset
-import android.bluetooth.BluetoothCodecConfig
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
@@ -23,20 +21,21 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Build
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
-import android.text.method.ScrollingMovementMethod
+import android.view.KeyEvent
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.sam.btagent.databinding.FragmentDashboardBinding
 import java.util.UUID
 import kotlin.math.PI
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 class DashboardFragment : Fragment() {
@@ -54,28 +53,24 @@ class DashboardFragment : Fragment() {
     private var isBleScanning = false
     private var a2dpSummary = ""
     private var headsetSummary = ""
-    private var audioDeviceSummary = ""
-    private var audioReadySummary = ""
-    private var validationSummary = ""
-    private var connectionHintSummary = ""
-    private var a2dpPlayingSummary = ""
-    private var codecSummary = "Codec info unavailable to regular app"
-    private var connectionActionSummary = "No connect/disconnect action run yet."
-    private var testAudioSummary = "No 10-second test audio run yet."
-    
-    private var activeTestAudioTrack: AudioTrack? = null
-    private var activeTestAudioThread: Thread? = null
     private var selectedDeviceAddress: String? = null
     private var detailsExpanded = true
-    private var lastScanBackend = "None"
+    private var scanTimer: CountDownTimer? = null
+    private val SCAN_DURATION_MS = 12_800L
+
+    // Rapid Test States
+    private var isRapidTesting = false
+    private var rapidTestThread: Thread? = null
+
+    private lateinit var discoveryAdapter: DeviceAdapter
+    private lateinit var bondedAdapter: DeviceAdapter
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val updateRunnable = Runnable { renderFoundDevices() }
+    private var lastUpdateTime = 0L
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            updateBluetoothSummary()
-        }
-
-    private val enableBluetoothLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             updateBluetoothSummary()
         }
 
@@ -86,28 +81,20 @@ class DashboardFragment : Fragment() {
                     BluetoothAdapter.ACTION_DISCOVERY_STARTED -> {
                         updateScanUI()
                     }
-
                     BluetoothDevice.ACTION_FOUND,
                     BluetoothDevice.ACTION_NAME_CHANGED -> {
                         val device = parcelableBluetoothDevice(intent, BluetoothDevice.EXTRA_DEVICE)
                         val address = device?.address ?: return
                         classicFoundDevices[address] = device
-                        renderFoundDevices()
+                        requestRenderFoundDevices()
                     }
-
                     BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
                         updateScanUI()
                     }
-
                     BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
-                        val device = parcelableBluetoothDevice(intent, BluetoothDevice.EXTRA_DEVICE)
-                        if (device?.bondState == BluetoothDevice.BOND_BONDED) {
-                            selectedDeviceAddress = device.address
-                        }
                         updateBluetoothSummary()
                         renderFoundDevices()
                     }
-
                     BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
                     BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
                         updateBluetoothSummary()
@@ -121,10 +108,8 @@ class DashboardFragment : Fragment() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val address = result.device.address ?: return
                 bleFoundDevices[address] = result.device
-                renderFoundDevices()
-                updateScanUI()
+                requestRenderFoundDevices()
             }
-
             override fun onScanFailed(errorCode: Int) {
                 isBleScanning = false
                 updateScanUI()
@@ -147,36 +132,26 @@ class DashboardFragment : Fragment() {
         binding.unpairDeviceButton.setOnClickListener { unpairSelectedDevice() }
         binding.playTestAudioButton.setOnClickListener { playTestAudio() }
         binding.toggleDetailsButton.setOnClickListener { toggleDeviceDetails() }
-        binding.aboutCard.setOnClickListener { showAboutDialog() }
 
-        val smartScrollListener = View.OnTouchListener { v, event ->
-            val canScroll = v.canScrollVertically(1) || v.canScrollVertically(-1)
-            if (canScroll) {
-                v.parent.requestDisallowInterceptTouchEvent(true)
-                if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
-                    v.parent.requestDisallowInterceptTouchEvent(false)
-                }
-            } else {
-                v.parent.requestDisallowInterceptTouchEvent(false)
-            }
-            false
+        // Rapid Stress Buttons
+        binding.btnStartRapidPlayPause.setOnClickListener { startRapidMediaTest(isPlayPause = true) }
+        binding.btnStartRapidNextPrev.setOnClickListener { startRapidMediaTest(isPlayPause = false) }
+        binding.btnStopRapid.setOnClickListener { stopRapidMediaTest() }
+
+        // Setup RecyclerViews
+        discoveryAdapter = DeviceAdapter { device ->
+            showPairingDialog(device)
         }
+        binding.discoveryRecyclerView.layoutManager = LinearLayoutManager(context)
+        binding.discoveryRecyclerView.adapter = discoveryAdapter
 
-        binding.bondedListView.setOnTouchListener(smartScrollListener)
-        binding.discoveryListView.setOnTouchListener(smartScrollListener)
-
-        binding.bondedListView.setOnItemClickListener { _, _, position, _ ->
-            selectedDeviceAddress = bondedDevices.keys.elementAtOrNull(position)
-            setDetailsExpanded(true)
+        bondedAdapter = DeviceAdapter { device ->
+            selectedDeviceAddress = device.address
             renderDeviceDetails()
             updateBondedDeviceList()
         }
-
-        binding.discoveryListView.setOnItemClickListener { _, _, position, _ ->
-            val allFound = getFilteredFoundDevices()
-            val device = allFound.elementAtOrNull(position) ?: return@setOnItemClickListener
-            showPairingDialog(device)
-        }
+        binding.bondedRecyclerView.layoutManager = LinearLayoutManager(context)
+        binding.bondedRecyclerView.adapter = bondedAdapter
 
         val receiverFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ContextCompat.RECEIVER_EXPORTED
@@ -200,7 +175,6 @@ class DashboardFragment : Fragment() {
 
         updateBluetoothSummary()
         requestBluetoothPermissions()
-        updateDetailsVisibility()
 
         val versionName = try {
             val pInfo = requireContext().packageManager.getPackageInfo(requireContext().packageName, 0)
@@ -220,24 +194,10 @@ class DashboardFragment : Fragment() {
         runCatching { requireContext().unregisterReceiver(discoveryReceiver) }
         bluetoothAdapter()?.cancelDiscovery()
         stopBleScan()
+        scanTimer?.cancel()
         stopTestAudio()
         super.onDestroyView()
         _binding = null
-    }
-
-    private fun showAboutDialog() {
-        val versionName = try {
-            val pInfo = requireActivity().packageManager.getPackageInfo(requireActivity().packageName, 0)
-            pInfo.versionName
-        } catch (e: Exception) {
-            "0.00.07"
-        }
-
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("About BT Agent")
-            .setMessage("© TYMPHANY SQA\nVersion: $versionName\n\nThis tool is designed for internal Bluetooth validation.")
-            .setPositiveButton("OK", null)
-            .show()
     }
 
     private fun updateBluetoothSummary() {
@@ -261,12 +221,9 @@ class DashboardFragment : Fragment() {
         }
 
         val currentSelected = selectedDeviceAddress
-        if (bonded.size == 1) {
-            selectedDeviceAddress = bonded.first().address
-        } else if (currentSelected == null || currentSelected !in bondedDevices) {
+        if (currentSelected == null || currentSelected !in bondedDevices) {
             selectedDeviceAddress = bonded.firstOrNull()?.address
         }
-        
         updateBondedDeviceList()
     }
 
@@ -288,33 +245,50 @@ class DashboardFragment : Fragment() {
         classicFoundDevices.clear()
         bleFoundDevices.clear()
         renderFoundDevices()
-        binding.discoveryListView.visibility = View.VISIBLE
+        binding.discoveryRecyclerView.visibility = View.VISIBLE
         runCatching { adapter.cancelDiscovery() }
         stopBleScan()
         
         val started = runCatching { adapter.startDiscovery() }.getOrDefault(false)
-        if (started && scanMode == ScanMode.CLASSIC_AND_BLE) {
-            startBleScanFallback(parallelWithClassic = true)
+        if (started) {
+            if (scanMode == ScanMode.CLASSIC_AND_BLE) {
+                startBleScanFallback()
+            }
+            startCountdownTimer()
         }
         updateScanUI()
+    }
+
+    private fun startCountdownTimer() {
+        scanTimer?.cancel()
+        binding.scanCountdownText.visibility = View.VISIBLE
+        scanTimer = object : CountDownTimer(SCAN_DURATION_MS, 1000) {
+            override fun onTick(millisUntilFinished: Long) {
+                val seconds = (millisUntilFinished / 1000).toInt()
+                binding.scanCountdownText.text = "(Scanning... ${seconds}s)"
+            }
+            override fun onFinish() {
+                binding.scanCountdownText.visibility = View.GONE
+                stopScan()
+            }
+        }.start()
     }
 
     private fun stopScan() {
         bluetoothAdapter()?.cancelDiscovery()
         stopBleScan()
+        scanTimer?.cancel()
+        binding.scanCountdownText.visibility = View.GONE
+        updateScanUI()
     }
 
-    private fun startBleScanFallback(parallelWithClassic: Boolean = false) {
+    private fun startBleScanFallback() {
         val scanner = bluetoothAdapter()?.bluetoothLeScanner ?: return
         isBleScanning = true
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
         runCatching { scanner.startScan(null, settings, bleScanCallback) }
-        
-        Handler(Looper.getMainLooper()).postDelayed({
-            stopBleScan()
-        }, 10_000)
     }
 
     private fun stopBleScan() {
@@ -332,35 +306,36 @@ class DashboardFragment : Fragment() {
     }
 
     private fun getFilteredFoundDevices(): List<BluetoothDevice> {
-        return (classicFoundDevices.values + bleFoundDevices.values)
+        // Create a copy to avoid ConcurrentModificationException
+        val classic = synchronized(classicFoundDevices) { classicFoundDevices.values.toList() }
+        val ble = synchronized(bleFoundDevices) { bleFoundDevices.values.toList() }
+        
+        return (classic + ble)
             .distinctBy { it.address }
-            .sortedWith(compareByDescending<BluetoothDevice> { it.bondState == BluetoothDevice.BOND_BONDING }
-                .thenByDescending { 
-                    val name = if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) it.name else null
-                    !name.isNullOrBlank()
-                }
-                .thenBy { if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) it.name ?: it.address else it.address })
+            .sortedWith(compareByDescending<BluetoothDevice> { it.bondState == BluetoothDevice.BOND_BONDED }
+                .thenByDescending { it.name != null }
+                .thenBy { it.name ?: it.address }
+            )
+    }
+
+    private fun requestRenderFoundDevices() {
+        val now = System.currentTimeMillis()
+        if (now - lastUpdateTime > 800) { // Throttle: Max update frequency once per 800ms
+            renderFoundDevices()
+            lastUpdateTime = now
+        } else {
+            mainHandler.removeCallbacks(updateRunnable)
+            mainHandler.postDelayed(updateRunnable, 800)
+        }
     }
 
     private fun renderFoundDevices() {
-        val allFound = getFilteredFoundDevices()
-        val adapter = object : android.widget.ArrayAdapter<BluetoothDevice>(
-            requireContext(),
-            R.layout.device_list_item,
-            allFound
-        ) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = convertView ?: layoutInflater.inflate(R.layout.device_list_item, parent, false)
-                val device = getItem(position)!!
-                val nameView = view.findViewById<android.widget.TextView>(R.id.deviceName)
-                val addressView = view.findViewById<android.widget.TextView>(R.id.deviceAddress)
-                
-                nameView.text = if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) device.name ?: "Unknown" else "Unknown"
-                addressView.text = device.address
-                return view
-            }
-        }
-        binding.discoveryListView.adapter = adapter
+        if (_binding == null) return
+        discoveryAdapter.submitList(getFilteredFoundDevices())
+    }
+
+    private fun updateBondedDeviceList() {
+        bondedAdapter.submitList(bondedDevices.values.toList())
     }
 
     private fun showPairingDialog(device: BluetoothDevice) {
@@ -376,32 +351,8 @@ class DashboardFragment : Fragment() {
             .show()
     }
 
-    private fun updateBondedDeviceList() {
-        val adapter = object : android.widget.ArrayAdapter<BluetoothDevice>(
-            requireContext(),
-            R.layout.device_list_item,
-            bondedDevices.values.toList()
-        ) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = convertView ?: layoutInflater.inflate(R.layout.device_list_item, parent, false)
-                val device = getItem(position)!!
-                val nameView = view.findViewById<android.widget.TextView>(R.id.deviceName)
-                val addressView = view.findViewById<android.widget.TextView>(R.id.deviceAddress)
-
-                nameView.text = device.name ?: "Unknown"
-                addressView.text = device.address
-                
-                val isSelected = device.address == selectedDeviceAddress
-                view.setBackgroundColor(if (isSelected) 0x1A000000 else 0)
-                return view
-            }
-        }
-        binding.bondedListView.adapter = adapter
-    }
-
     private fun renderDeviceDetails() {
-        val address = selectedDeviceAddress
-        val device = address?.let { bondedDevices[it] }
+        val device = selectedDeviceAddress?.let { bondedDevices[it] }
         if (device == null) {
             binding.deviceDetailsCard.visibility = View.GONE
             return
@@ -412,44 +363,143 @@ class DashboardFragment : Fragment() {
         
         val isA2dpConnected = a2dpSummary.contains(device.address)
         val isHfpConnected = headsetSummary.contains(device.address)
-        val isAnyConnected = isA2dpConnected || isHfpConnected
-        val isFullyConnected = isA2dpConnected && isHfpConnected
 
-        binding.connectionStatusSummary.text = buildString {
-            append("A2DP: ")
-            append(if (isA2dpConnected) "Connected" else "Disconnected")
-            append("\nHFP: ")
-            append(if (isHfpConnected) "Connected" else "Disconnected")
-        }
-
-        // Update button states based on connection status
-        binding.connectDeviceButton.isEnabled = !isFullyConnected
-        binding.disconnectDeviceButton.isEnabled = isAnyConnected
+        binding.connectionStatusSummary.text = "A2DP: ${if (isA2dpConnected) "Connected" else "Disconnected"}\nHFP: ${if (isHfpConnected) "Connected" else "Disconnected"}"
+        binding.connectDeviceButton.isEnabled = !(isA2dpConnected && isHfpConnected)
+        binding.disconnectDeviceButton.isEnabled = isA2dpConnected || isHfpConnected
         binding.playTestAudioButton.isEnabled = isA2dpConnected
     }
 
     private fun toggleDeviceDetails() {
         val visible = binding.rawDeviceInfoText.visibility == View.VISIBLE
         binding.rawDeviceInfoText.visibility = if (visible) View.GONE else View.VISIBLE
-        binding.rawDeviceInfoText.text = buildString {
-            append("A2DP Raw: $a2dpSummary\n")
-            append("HFP Raw: $headsetSummary\n")
-            append("Codec: $codecSummary")
-        }
-    }
-
-    private fun setDetailsExpanded(expanded: Boolean) {
-        detailsExpanded = expanded
-        updateDetailsVisibility()
-    }
-
-    private fun updateDetailsVisibility() {
-        binding.deviceDetailsCard.visibility = if (selectedDeviceAddress != null) View.VISIBLE else View.GONE
+        binding.rawDeviceInfoText.text = "A2DP Raw: $a2dpSummary\nHFP Raw: $headsetSummary"
     }
 
     private fun requestDeviceConnection(connect: Boolean) {
         val device = selectedDeviceAddress?.let { bondedDevices[it] } ?: return
-        requestProfileConnection(listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET), device, connect)
+        val adapter = bluetoothAdapter() ?: return
+        val context = context ?: return
+        
+        val action = if (connect) "Connect" else "Disconnect"
+        android.util.Log.d("BTAgent", "User requested $action for ${device.address}")
+        LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "Action: $action Device: ${device.address}")
+
+        if (connect) {
+            adapter.cancelDiscovery()
+            stopBleScan()
+        }
+
+        Thread {
+            try {
+                if (!connect) {
+                    // 斷開前確保音訊完全釋放
+                    stopTestAudio()
+                    Thread.sleep(800) // 等待 A2DP 頻道徹底釋放
+                }
+
+                // 斷開順序：HFP -> A2DP (反向更穩定)
+                // 連線順序：A2DP -> HFP
+                val profileOrder = if (connect) {
+                    listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET)
+                } else {
+                    listOf(BluetoothProfile.HEADSET, BluetoothProfile.A2DP)
+                }
+
+                performProfileActionSequentially(profileOrder, device, connect)
+                
+                if (connect) {
+                    try {
+                        val method = device.javaClass.getMethod("connect")
+                        method.isAccessible = true
+                        method.invoke(device)
+                    } catch (e: Exception) {}
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("BTAgent", "Connection thread error: ${e.message}")
+            }
+        }.start()
+        
+        Toast.makeText(context, "Initiating $action...", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun performProfileActionSequentially(profiles: List<Int>, device: BluetoothDevice, connect: Boolean) {
+        val adapter = bluetoothAdapter() ?: return
+        val context = context ?: return
+        
+        // 關鍵：使用遠端地址重新獲取裝置物件，確保與系統狀態機同步
+        val remoteDevice = adapter.getRemoteDevice(device.address)
+
+        profiles.forEach { profileId ->
+            var actionFinished = false
+            val pName = if (profileId == BluetoothProfile.A2DP) "A2DP" else "HFP"
+            
+            adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
+                override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
+                    Thread {
+                        try {
+                            // 1. Set Policy/Priority (Same as before)
+                            try {
+                                val setPolicy = proxy.javaClass.methods.find { it.name == "setConnectionPolicy" || it.name == "setPriority" }
+                                setPolicy?.isAccessible = true
+                                if (setPolicy?.parameterTypes?.size == 2) {
+                                    setPolicy.invoke(proxy, remoteDevice, 100)
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("BTAgent", "SetPolicy failed: ${e.message}")
+                            }
+
+                            // 2. Action (Connect/Disconnect)
+                            val methodName = if (connect) "connect" else "disconnect"
+                            // 強化查找：從所有 public/private 方法中找尋，不論層級
+                            val method = proxy.javaClass.methods.find { 
+                                it.name == methodName && it.parameterTypes.size == 1 && it.parameterTypes[0] == BluetoothDevice::class.java 
+                            } ?: proxy.javaClass.getDeclaredMethod(methodName, BluetoothDevice::class.java)
+                            
+                            method.isAccessible = true
+                            val result = method.invoke(proxy, remoteDevice) as? Boolean ?: false
+                            
+                            android.util.Log.d("BTAgent", "$pName $methodName invoked, result: $result")
+                            LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "$pName $methodName call: $result")
+
+                            // 3. Polling for state change
+                            val targetState = if (connect) BluetoothProfile.STATE_CONNECTED else BluetoothProfile.STATE_DISCONNECTED
+                            val start = System.currentTimeMillis()
+                            var reached = false
+                            while (System.currentTimeMillis() - start < 6000) {
+                                if (proxy.getConnectionState(remoteDevice) == targetState) {
+                                    reached = true
+                                    break
+                                }
+                                Thread.sleep(400)
+                            }
+                            LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "$pName $methodName status: ${if(reached) "Success" else "Timeout"}")
+                            
+                        } catch (e: Exception) {
+                            android.util.Log.e("BTAgent", "$pName execution failed: ${e.message}")
+                            LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "$pName error: ${e.message}")
+                        } finally {
+                            adapter.closeProfileProxy(id, proxy)
+                            actionFinished = true
+                        }
+                    }.start()
+                }
+                override fun onServiceDisconnected(id: Int) { actionFinished = true }
+            }, profileId)
+
+            val waitStart = System.currentTimeMillis()
+            while (!actionFinished && System.currentTimeMillis() - waitStart < 8000) {
+                Thread.sleep(100)
+            }
+        }
+        
+        mainHandler.post { 
+            if (isAdded) {
+                updateBluetoothSummary()
+                val finalAction = if (connect) "Connect" else "Disconnect"
+                Toast.makeText(context, "$finalAction complete", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun unpairSelectedDevice() {
@@ -460,32 +510,89 @@ class DashboardFragment : Fragment() {
         }
     }
 
-    private fun requestProfileConnection(profiles: List<Int>, device: BluetoothDevice, connect: Boolean) {
-        val adapter = bluetoothAdapter() ?: return
-        val context = context ?: return
-        profiles.forEach { profile ->
-            adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
-                override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
-                    runCatching {
-                        val methodName = if (connect) "connect" else "disconnect"
-                        val method = proxy.javaClass.getMethod(methodName, BluetoothDevice::class.java)
-                        method.invoke(proxy, device)
-                    }
-                    adapter.closeProfileProxy(id, proxy)
-                }
-                override fun onServiceDisconnected(id: Int) {}
-            }, profile)
+    // --- Rapid Media Stress Implementation ---
+
+    private fun startRapidMediaTest(isPlayPause: Boolean) {
+        val loopInput = binding.rapidLoopCountInput.text.toString().toIntOrNull() ?: 100
+        val isNonStop = binding.cbNonStop.isChecked
+        val actualLoops = if (isNonStop) Int.MAX_VALUE else loopInput.coerceIn(1, 9999)
+
+        isRapidTesting = true
+        
+        binding.btnStartRapidPlayPause.isEnabled = false
+        binding.btnStartRapidNextPrev.isEnabled = false
+        binding.btnStopRapid.visibility = View.VISIBLE
+        binding.rapidProgressBar.visibility = View.VISIBLE
+        binding.rapidProgressBar.isIndeterminate = isNonStop
+        if (!isNonStop) {
+            binding.rapidProgressBar.max = actualLoops
+            binding.rapidProgressBar.progress = 0
         }
-        Handler(Looper.getMainLooper()).postDelayed({ 
-            if (isAdded) {
-                updateBluetoothSummary()
+
+        val limitStrLog = if(isNonStop) "Non-stop" else "$actualLoops loops"
+        val startMsg = "Starting Rapid Media Test: $limitStrLog"
+        LogPersistenceManager.persistLog(requireContext().applicationContext, "RapidStress", startMsg)
+        Toast.makeText(context, startMsg, Toast.LENGTH_SHORT).show()
+
+        rapidTestThread = Thread {
+            try {
+                for (i in 1..actualLoops) {
+                    if (!isRapidTesting) break
+                    
+                    mainHandler.post {
+                        if (!isNonStop && _binding != null) {
+                            binding.rapidProgressBar.progress = i
+                        }
+                    }
+
+                    if (isPlayPause) {
+                        sendMediaButtonEvent(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+                    } else {
+                        sendMediaButtonEvent(KeyEvent.KEYCODE_MEDIA_NEXT)
+                        Thread.sleep(300)
+                        sendMediaButtonEvent(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+                    }
+
+                    Thread.sleep(600) // 避免指令堆疊過快
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("BTAgent", "Rapid Test Error: ${e.message}")
+            } finally {
+                mainHandler.post { stopRapidMediaTest() }
             }
-        }, 2000)
+        }
+        rapidTestThread?.start()
     }
+
+    private fun stopRapidMediaTest() {
+        isRapidTesting = false
+        rapidTestThread?.interrupt()
+        rapidTestThread = null
+        
+        if (_binding != null) {
+            binding.btnStartRapidPlayPause.isEnabled = true
+            binding.btnStartRapidNextPrev.isEnabled = true
+            binding.btnStopRapid.visibility = View.GONE
+            binding.rapidProgressBar.visibility = View.GONE
+        }
+        Toast.makeText(context, "Rapid Test Stopped", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun sendMediaButtonEvent(keyCode: Int) {
+        val audioManager = context?.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+        val eventDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+        val eventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+        
+        audioManager.dispatchMediaKeyEvent(eventDown)
+        audioManager.dispatchMediaKeyEvent(eventUp)
+    }
+
+    private var activeTestAudioTrack: AudioTrack? = null
+    private var activeTestAudioThread: Thread? = null
 
     private fun playTestAudio() {
         stopTestAudio()
-        val thread = Thread {
+        activeTestAudioThread = Thread {
             try {
                 val sampleRate = 44_100
                 val durationSeconds = 10
@@ -500,77 +607,64 @@ class DashboardFragment : Fragment() {
                 track.write(pcm, 0, pcm.size)
                 track.play()
                 Thread.sleep(durationSeconds * 1000L)
-            } catch (e: InterruptedException) {
-                // Thread interrupted, exit safely
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                activeTestAudioTrack?.let {
-                    try {
-                        if (it.state != AudioTrack.STATE_UNINITIALIZED) {
-                            it.stop()
-                            it.release()
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                    activeTestAudioTrack = null
-                }
-            }
+            } catch (e: Exception) {} finally { stopTestAudio() }
         }
-        activeTestAudioThread = thread
-        thread.start()
+        activeTestAudioThread?.start()
     }
 
     private fun stopTestAudio() {
+        android.util.Log.d("BTAgent", "Stopping test audio...")
         activeTestAudioThread?.interrupt()
-        activeTestAudioThread = null
-        activeTestAudioTrack?.let {
+        activeTestAudioTrack?.apply {
             try {
-                if (it.state != AudioTrack.STATE_UNINITIALIZED) {
-                    it.stop()
-                    it.release()
+                if (state != AudioTrack.STATE_UNINITIALIZED) {
+                    pause()
+                    flush()
+                    stop()
+                    release()
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                android.util.Log.e("BTAgent", "Audio release error: ${e.message}")
             }
-            activeTestAudioTrack = null
         }
+        activeTestAudioTrack = null
+        activeTestAudioThread = null
     }
 
     private fun loadProfileDiagnostics() {
-        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return
         val adapter = bluetoothAdapter() ?: return
         val context = context ?: return
         
         listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET).forEach { profile ->
             adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
                 override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
-                    val devices = proxy.connectedDevices
-                    val summary = devices.joinToString { it.address }
+                    val connectedDevices = proxy.connectedDevices
+                    val summary = if (connectedDevices.isEmpty()) "None" else {
+                        connectedDevices.joinToString("\n") { device ->
+                            val policy = try {
+                                val getPolicy = proxy.javaClass.methods.find { it.name == "getConnectionPolicy" || it.name == "getPriority" }
+                                getPolicy?.isAccessible = true
+                                val pValue = getPolicy?.invoke(proxy, device) as? Int ?: -1
+                                when (pValue) {
+                                    100 -> "ALLOWED"
+                                    0 -> "FORBIDDEN"
+                                    -1 -> "UNKNOWN"
+                                    else -> "P:$pValue"
+                                }
+                            } catch (e: Exception) { "N/A" }
+                            
+                            "• ${device.name ?: "Unknown"} [${device.address}] (Policy: $policy)"
+                        }
+                    }
+
                     if (id == BluetoothProfile.A2DP) a2dpSummary = summary else headsetSummary = summary
-                    if (id == BluetoothProfile.A2DP && devices.isNotEmpty()) {
-                        val a2dp = proxy as? BluetoothA2dp
-                        codecSummary = readCodecSummary(a2dp, devices.first())
-                    }
-                    if (isAdded) {
-                        renderDeviceDetails()
-                    }
+                    
+                    mainHandler.post { if (isAdded) renderDeviceDetails() }
                     adapter.closeProfileProxy(id, proxy)
                 }
                 override fun onServiceDisconnected(id: Int) {}
             }, profile)
         }
-    }
-
-    private fun readCodecSummary(a2dp: BluetoothA2dp?, device: BluetoothDevice?): String {
-        if (a2dp == null || device == null) return "Unknown"
-        return runCatching {
-            val method = a2dp.javaClass.getMethod("getCodecStatus", BluetoothDevice::class.java)
-            val status = method.invoke(a2dp, device)
-            val config = status?.javaClass?.getMethod("getCodecConfig")?.invoke(status)
-            config?.toString() ?: "Unknown"
-        }.getOrDefault("Unknown")
     }
 
     private fun requiredPermissions() = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.ACCESS_FINE_LOCATION)

@@ -200,6 +200,32 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:layout_marginEnd="4dp"
+                        android:hint="Loop Count (1-9999)">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/rapidLoopCountInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:text="100"/>
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/cbNonStop"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Non-stop (∞)" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
                         android:hint="@string/base_interval_hint">
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/rapidIntervalInput"
@@ -234,6 +260,13 @@
                     <CheckBox android:id="@+id/cbNext" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Next" android:layout_marginStart="8dp"/>
                     <CheckBox android:id="@+id/cbPrev" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Prev" android:layout_marginStart="8dp"/>
                     <CheckBox android:id="@+id/cbStop" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Stop" android:layout_marginStart="8dp"/>
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/swStopOnError"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Stop on Error / Timeout"
+                    android:checked="false" />
                 </com.google.android.flexbox.FlexboxLayout>
 
                 <Button
@@ -243,6 +276,14 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="Start Rapid Commands"/>
+
+                <com.google.android.material.progressindicator.LinearProgressIndicator
+                    android:id="@+id/rapidProgressBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone"
+                    app:trackThickness="4dp" />
 
                 <Button
                     android:id="@+id/stopAutoButton"

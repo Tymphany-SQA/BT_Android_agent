@@ -91,6 +91,9 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         
         updateStatus("Manual: $actionName")
         log("Sent Media Key: $actionName")
+        
+        // Context log for all key events
+        activity?.let { LogPersistenceManager.persistLog(it.applicationContext, "MediaControl", "Key Sent: $actionName") }
     }
 
     private fun startVolumeCycle() {
@@ -128,12 +131,14 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
                     
                     val currentPct = if (maxVol > 0) (currentVol.toFloat() / maxVol * 100).toInt() else 0
                     log("Vol Auto Adj: $currentPct% ($currentVol/$maxVol)")
+                    activity?.let { LogPersistenceManager.persistLog(it.applicationContext, "MediaStress", "Vol Adj: $currentPct%") }
                     Thread.sleep(interval)
                 }
             } catch (e: InterruptedException) {
                 // Thread stopped
             } catch (e: Exception) {
                 log("Vol Cycle Error: ${e.message}")
+                handleTestError("VolCycle: ${e.message}")
             } finally {
                 activity?.runOnUiThread { updateUiForTest(false) }
             }
@@ -142,6 +147,10 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
     }
 
     private fun startRapidPlayPause() {
+        val loopInput = binding.rapidLoopCountInput.text.toString().toIntOrNull() ?: 100
+        val isNonStop = binding.cbNonStop.isChecked
+        val actualLoops = if (isNonStop) Int.MAX_VALUE else loopInput.coerceIn(1, 9999)
+
         val baseInterval = binding.rapidIntervalInput.text.toString().toLongOrNull() ?: 1000L
         val randomRange = binding.randomRangeInput.text.toString().toIntOrNull() ?: 500
         
@@ -159,25 +168,36 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         isAutoTesting = true
         updateUiForTest(true)
         
-        log("Starting Rapid Stress (Base: ${baseInterval}ms, Random: 0-$randomRange, Keys: ${selectedKeys.size})")
+        val limitStr = if(isNonStop) "Non-stop" else "$actualLoops loops"
+        log("Starting Rapid Stress ($limitStr, Base: ${baseInterval}ms, Random: 0-$randomRange, Keys: ${selectedKeys.size})")
+
+        binding.rapidProgressBar.visibility = View.VISIBLE
+        binding.rapidProgressBar.isIndeterminate = isNonStop
+        if (!isNonStop) {
+            binding.rapidProgressBar.max = actualLoops
+            binding.rapidProgressBar.progress = 0
+        }
 
         testThread = Thread {
             try {
-                var index = 0
-                while (isAutoTesting) {
+                var count = 0
+                while (isAutoTesting && count < actualLoops) {
                     val extraDelay = if (randomRange > 0) Random.nextInt(1, randomRange + 1) else 0
                     val totalDelay = baseInterval + extraDelay
                     
-                    val keyCode = selectedKeys[index % selectedKeys.size]
+                    val keyCode = selectedKeys[count % selectedKeys.size]
                     
+                    count++
                     activity?.runOnUiThread {
-                        updateStatus("Auto: Rapid Cmd (${totalDelay}ms)")
+                        updateStatus("Auto: Rapid Cmd $count/$limitStr")
+                        if (!isNonStop && _binding != null) {
+                            binding.rapidProgressBar.progress = count
+                        }
                     }
                     
                     sendMediaKey(keyCode)
-                    log("Key sent, next in ${totalDelay}ms (random: +${extraDelay}ms)")
+                    log("[$count] Key sent, next in ${totalDelay}ms")
                     
-                    index++
                     Thread.sleep(totalDelay)
                 }
             } catch (e: InterruptedException) {
@@ -185,7 +205,10 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
             } catch (e: Exception) {
                 log("Rapid Stress Error: ${e.message}")
             } finally {
-                activity?.runOnUiThread { updateUiForTest(false) }
+                activity?.runOnUiThread { 
+                    updateUiForTest(false)
+                    binding.rapidProgressBar.visibility = View.GONE
+                }
             }
         }
         testThread?.start()
@@ -197,6 +220,22 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         log("Automation stopped.")
         updateStatus("Stopped")
         updateUiForTest(false)
+    }
+
+    private fun handleTestError(reason: String) {
+        val stopOnError = binding.swStopOnError.isChecked
+        if (stopOnError) {
+            log("STOP ON ERROR: $reason triggered. Saving snapshot...")
+            activity?.let { LogPersistenceManager.saveErrorSnapshot(it.applicationContext, reason) }
+            isAutoTesting = false
+            testThread?.interrupt()
+            activity?.runOnUiThread {
+                Toast.makeText(context, "Media Test stopped due to error: $reason", Toast.LENGTH_LONG).show()
+                updateUiForTest(false)
+            }
+        } else {
+            activity?.let { LogPersistenceManager.saveErrorSnapshot(it.applicationContext, "MediaSoftError: $reason") }
+        }
     }
 
     private fun updateStatus(status: String) {
@@ -219,6 +258,9 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         binding.cbNext.isEnabled = !running
         binding.cbPrev.isEnabled = !running
         binding.cbStop.isEnabled = !running
+        binding.cbNonStop.isEnabled = !running
+        binding.rapidLoopCountInput.isEnabled = !running
+        binding.swStopOnError.isEnabled = !running
         binding.stopAutoButton.visibility = if (running) View.VISIBLE else View.GONE
     }
 

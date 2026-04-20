@@ -12,12 +12,25 @@ import java.util.Locale
 object LogPersistenceManager {
     private const val TAG = "LogPersistenceManager"
     private const val DIR_NAME = "BT_Android_Agent_Logs"
+    private const val BUFFER_SIZE = 1000
+
+    private val logBuffer = java.util.Collections.synchronizedList(mutableListOf<String>())
 
     /**
-     * Appends a log entry to a file in the public Downloads directory.
-     * File name format: [prefix]_YYYYMMDD.csv
+     * Appends a log entry to a file and also maintains a circular buffer in memory.
      */
     fun persistLog(context: Context, prefix: String, message: String) {
+        val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+        val logEntry = "[$timeStamp] [$prefix] $message"
+        
+        // Add to circular buffer
+        synchronized(logBuffer) {
+            logBuffer.add(logEntry)
+            if (logBuffer.size > BUFFER_SIZE) {
+                logBuffer.removeAt(0)
+            }
+        }
+
         try {
             val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val appLogDir = File(downloadDir, DIR_NAME)
@@ -87,6 +100,37 @@ object LogPersistenceManager {
             
             // Also call original handler (shows the "App has stopped" dialog)
             defaultHandler?.uncaughtException(thread, throwable)
+        }
+    }
+
+    /**
+     * Saves the current log buffer to a snapshot file for error analysis.
+     */
+    fun saveErrorSnapshot(context: Context, errorReason: String) {
+        try {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appLogDir = File(downloadDir, DIR_NAME)
+            if (!appLogDir.exists()) appLogDir.mkdirs()
+
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = "Snapshot_ERROR_$timeStamp.csv"
+            val file = File(appLogDir, fileName)
+
+            val snapshotContent = synchronized(logBuffer) {
+                logBuffer.toList()
+            }
+
+            FileOutputStream(file).use { fos ->
+                fos.write("Snapshot triggered by: $errorReason\n".toByteArray())
+                fos.write("--- Log Buffer Start ---\n".toByteArray())
+                snapshotContent.forEach { line ->
+                    fos.write("$line\n".toByteArray())
+                }
+                fos.write("--- Log Buffer End ---\n".toByteArray())
+            }
+            Log.d(TAG, "Error snapshot saved: ${file.absolutePath}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save snapshot: ${e.message}")
         }
     }
 }

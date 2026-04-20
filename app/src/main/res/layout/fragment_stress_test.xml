@@ -93,8 +93,16 @@
                     android:id="@+id/audioSelector"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp"
+                    android:layout_marginBottom="8dp"
                     android:minHeight="48dp" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/swStopOnError"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp"
+                    android:text="Stop on Error / Timeout"
+                    android:checked="false" />
 
                 <Button
                     android:id="@+id/startTestButton"

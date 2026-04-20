@@ -1,7 +1,6 @@
 package com.sam.btagent
 
 import android.Manifest
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
@@ -175,6 +174,7 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
             binding.pauseDurationInput.isEnabled = false
             binding.repeatCountInput.isEnabled = false
             binding.audioSelector.isEnabled = false
+            binding.swStopOnError.isEnabled = false
             
             binding.testProgressBar.max = repeats
             binding.testProgressBar.progress = 0
@@ -211,6 +211,7 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
                     binding.pauseDurationInput.isEnabled = true
                     binding.repeatCountInput.isEnabled = true
                     binding.audioSelector.isEnabled = true
+                    binding.swStopOnError.isEnabled = true
                     binding.testStatusText.text = getString(R.string.test_status_label, getString(R.string.test_status_idle))
                 }
             }
@@ -258,6 +259,7 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
                 log("Connection KPI: $duration ms")
             } else {
                 log("Connection failed or timed out")
+                handleTestError("Connection Timeout/Fail")
             }
             connected = true
         }
@@ -282,6 +284,21 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         interruptibleSleep(pauseSec)
         
         log("--- [END LOOP #$loopIndex] ---")
+    }
+
+    private fun handleTestError(reason: String) {
+        val stopOnError = binding.swStopOnError.isChecked
+        if (stopOnError) {
+            log("STOP ON ERROR: $reason triggered. Saving snapshot...")
+            activity?.let { LogPersistenceManager.saveErrorSnapshot(it.applicationContext, reason) }
+            isTesting = false
+            activity?.runOnUiThread {
+                Toast.makeText(context, "Test stopped due to error: $reason", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            // Even if we don't stop, still save a snapshot if it's a major error
+            activity?.let { LogPersistenceManager.saveErrorSnapshot(it.applicationContext, "SoftError: $reason") }
+        }
     }
 
     private fun updateStatus(status: String) {
@@ -472,7 +489,7 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         activeAudioTrack?.let {
             try {
                 if (it.state != AudioTrack.STATE_UNINITIALIZED) {
-                    it.pause() // Use pause() instead of stop() for immediate safety
+                    it.pause()
                     it.flush()
                     it.release()
                 }

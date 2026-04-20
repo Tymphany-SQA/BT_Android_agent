@@ -18,6 +18,7 @@ The current app is organized around a side navigation drawer with several test p
 - **Acoustic**: Real-time 1kHz loopback test for audio continuity and frequency validation.
 - **Volume Linearity**: Automatic 16-step (0-15) volume gain consistency check.
 - **Audio Latency**: End-to-end latency measurement using frequency switching (1kHz to 2kHz).
+- **Log Explorer**: View and share persistent test logs directly within the app, with **quick preview** support for CSV content.
 - **About**: Dedicated page for version info and project description.
 
 It uses a single-activity, fragment-based structure:
@@ -30,6 +31,7 @@ It uses a single-activity, fragment-based structure:
 - `AcousticLoopbackFragment` (Tone Generator + Real-time Goertzel Analysis)
 - `VolumeLinearityFragment` (Automated Volume Step Analysis)
 - `AudioLatencyFragment` (Frequency-switching Latency Measurement)
+- `LogViewerFragment` (Log Explorer)
 - `AboutFragment` (Project Information)
 
 ## Current UI and Features
@@ -257,6 +259,20 @@ Behavior:
 3. After 5 rounds, it calculates and displays the **average latency**.
 4. This multi-round approach helps filter out transient system jitters and provides a more reliable assessment of the Bluetooth audio path.
 
+### 9. Log Explorer
+The Log Explorer provides a central location to manage the structured test logs.
+
+UI sections:
+- Log file list (CSV files from internal storage)
+- `Refresh List` button
+- `Open Folder` info button
+
+Behavior:
+- Scans `Downloads/BT_Android_Agent_Logs/` for CSV files.
+- **Quick Preview**: Tapping a log file opens a preview dialog showing the first 50 lines of data in a readable code-style view.
+- **Share**: Long-press or use the share icon to export logs via standard Android share sheets.
+- Automatically highlights error/crash snapshots with alert icons.
+
 ## Navigation Safety
 If a stress-related page is running a test, the app intercepts side-drawer navigation changes and asks whether the user wants to stop the running test before switching pages.
 
@@ -285,9 +301,11 @@ app/
     BatteryMonitorFragment.kt
     BatteryLoggingService.kt
     LogPersistenceManager.kt
+    DeviceAdapter.kt
     AcousticLoopbackFragment.kt
     VolumeLinearityFragment.kt
     AudioLatencyFragment.kt
+    LogViewerFragment.kt
     AboutFragment.kt
   src/main/res/
     layout/
@@ -299,11 +317,16 @@ app/
       fragment_acoustic_loopback.xml
       fragment_volume_linearity.xml
       fragment_audio_latency.xml
+      fragment_log_viewer.xml
       fragment_about.xml
+      dialog_log_preview.xml
+      item_log_file.xml
       nav_header.xml
     values/
     menu/
       nav_drawer_menu.xml
+    xml/
+      file_paths.xml
 tools/
   adb_bt_summary.py
   bt_summary_gui.py
@@ -314,6 +337,8 @@ The repository includes a GitHub Actions workflow for test APK generation:
 - Workflow file: `.github/workflows/build-test-apk.yml`
 - Triggers:
   - manual run via `workflow_dispatch`
+  - automatic run on pushes to `main`
+  - automatic run on pushed tags matching `v*`
   - automatic run when a GitHub Release is published
 - Output:
   - builds a **debug APK** for testing
@@ -396,4 +421,4 @@ python3 tools/bt_summary_gui.py
 - Acoustic loopback detection depends on speaker volume, microphone gain, device acoustics, and environmental noise; threshold tuning may be needed across devices.
 
 ## Version
-- App version: `0.00.07`
+- App version: `0.00.08`
