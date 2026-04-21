@@ -51,6 +51,7 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
                     autoScrollLog()
                     updateRssiUI(s.getLastKnownRssi())
                     updateGlitchesUI(s.getTotalGlitches())
+                    updateQualityMetricsUI()
                 }
                 s.setLogUpdateListener { newEntry: String ->
                     activity?.runOnUiThread {
@@ -58,6 +59,7 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
                         autoScrollLog()
                         updateRssiUI(service?.getLastKnownRssi())
                         updateGlitchesUI(service?.getTotalGlitches() ?: 0)
+                        updateQualityMetricsUI()
                     }
                 }
             }
@@ -184,6 +186,13 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         binding.currentGlitchesText.text = getString(R.string.battery_glitches_format, glitches)
         val colorRes = if (glitches > 0) android.R.color.holo_red_dark else android.R.color.black
         binding.currentGlitchesText.setTextColor(ContextCompat.getColor(requireContext(), colorRes))
+    }
+
+    private fun updateQualityMetricsUI() {
+        val s = service
+        binding.linkQualityText.text = "RF Quality: ${s?.getRssiQualityText() ?: "--"}"
+        binding.acousticContinuityText.text = "Acoustic: ${s?.getAcousticContinuityText() ?: "N/A"}"
+        binding.routeChangesText.text = "Route Changes: ${s?.getUnexpectedRouteChanges() ?: 0}"
     }
 
     private var startLoggingPending = false

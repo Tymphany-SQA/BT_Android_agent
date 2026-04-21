@@ -20,8 +20,10 @@ import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.MediaRecorder
 import android.os.Binder
 import android.os.Build
 import android.os.Environment
@@ -37,8 +39,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.cos
 import kotlin.math.PI
+import kotlin.math.pow
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 class BatteryLoggingService : Service() {
@@ -62,8 +67,18 @@ class BatteryLoggingService : Service() {
     private var lastKnownRssi: Int? = null
 
     private var audioTrack: AudioTrack? = null
+    private var audioRecord: AudioRecord? = null
+    @Volatile private var acousticMonitorRunning = false
     private var lastUnderrunCount = 0
     private var totalGlitches = 0
+    private val rssiWindow = ArrayDeque<Int>()
+    private var lastRoute: String? = null
+    private var unexpectedRouteChanges = 0
+    private var acousticSamples = 0
+    private var acousticDetectedSamples = 0
+    private var acousticLostEvents = 0
+    private var lastAcousticDetected: Boolean? = null
+    private var latestRssiQualityText = "N/A"
     private val TAG = "BatteryLoggingService"
 
     companion object {
@@ -142,12 +157,14 @@ class BatteryLoggingService : Service() {
         this.isLogging = true
         this.totalGlitches = 0
         this.lastUnderrunCount = 0
+        resetQualityMetrics()
         
         startForeground(NOTIFICATION_ID, createNotification("Stability Monitoring Active"))
         addLog("Starting Stability Monitor for ${device.address}")
         
         if (enableAudio) {
             startBackgroundAudio()
+            startAcousticContinuityMonitor()
         }
 
         tryConnectGatt(device)
@@ -162,11 +179,13 @@ class BatteryLoggingService : Service() {
                 
                 activeGatt?.readRemoteRssi()
                 
-                val route = getAudioRoute()
-                addLog("Status: Bat ${if (level >= 0) "$level%" else "--%"} | Route: $route")
+                val route = updateRouteQuality(getAudioRoute())
+                val rssiQuality = updateRssiQuality(lastKnownRssi)
+                val acousticQuality = getAcousticContinuityText()
+                addLog("Status: Bat ${if (level >= 0) "$level%" else "--%"} | Route: $route | RF: $rssiQuality | Acoustic: $acousticQuality | RouteChanges: $unexpectedRouteChanges")
                 
-                updateNotification("Bat: ${if (level >= 0) "$level%" else "--%"} | RSSI: ${lastKnownRssi ?: "--"} | Glit: $totalGlitches")
-                persistData(device.address, level, lastKnownRssi, currentIntervalGlitches)
+                updateNotification("RF: $rssiQuality | Ac: $acousticQuality | Route: $unexpectedRouteChanges")
+                persistData(device.address, level, lastKnownRssi, currentIntervalGlitches, rssiQuality, acousticQuality, unexpectedRouteChanges)
                 
                 handler.postDelayed(this, intervalSec * 1000)
             }
@@ -243,6 +262,54 @@ class BatteryLoggingService : Service() {
         }
     }
 
+    private fun startAcousticContinuityMonitor() {
+        if (silentMode) {
+            addLog("Acoustic Continuity: N/A in silent mode")
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            addLog("Acoustic Continuity: RECORD_AUDIO permission missing")
+            return
+        }
+
+        val sampleRate = 44100
+        val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (minBufferSize <= 0) {
+            addLog("Acoustic Continuity: AudioRecord unavailable")
+            return
+        }
+
+        try {
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                minBufferSize.coerceAtLeast(4096)
+            )
+            acousticMonitorRunning = true
+            audioRecord?.startRecording()
+
+            Thread {
+                val buffer = ShortArray(2048)
+                while (isLogging && acousticMonitorRunning) {
+                    val read = try {
+                        audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    } catch (e: Exception) {
+                        0
+                    }
+                    if (read > 0) updateAcousticContinuity(buffer, read)
+                }
+            }.start()
+            addLog("Acoustic Continuity monitor started (440Hz)")
+        } catch (e: Exception) {
+            acousticMonitorRunning = false
+            runCatching { audioRecord?.release() }
+            audioRecord = null
+            addLog("Acoustic Continuity Error: ${e.message}")
+        }
+    }
+
     private fun checkAudioGlitches(): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             val track = audioTrack ?: return 0
@@ -255,7 +322,7 @@ class BatteryLoggingService : Service() {
         return 0
     }
 
-    private fun persistData(address: String, level: Int, rssi: Int?, glitches: Int) {
+    private fun persistData(address: String, level: Int, rssi: Int?, glitches: Int, rssiQuality: String, acousticQuality: String, routeChanges: Int) {
         try {
             val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val appLogDir = File(downloadDir, "BT_Android_Agent_Logs")
@@ -270,9 +337,9 @@ class BatteryLoggingService : Service() {
             
             FileOutputStream(file, true).use { fos ->
                 if (isNewFile) {
-                    fos.write("Timestamp,DeviceAddress,Battery,RSSI,Glitches,Route\n".toByteArray())
+                    fos.write("Timestamp,DeviceAddress,Battery,RSSI,Glitches,Route,RssiQuality,AcousticContinuity,RouteChanges\n".toByteArray())
                 }
-                val line = "$timeStamp,$address,${if (level >= 0) level else ""},${rssi ?: ""},$glitches,$route\n"
+                val line = "$timeStamp,$address,${if (level >= 0) level else ""},${rssi ?: ""},$glitches,$route,$rssiQuality,$acousticQuality,$routeChanges\n"
                 fos.write(line.toByteArray())
             }
         } catch (e: Exception) {
@@ -285,6 +352,9 @@ class BatteryLoggingService : Service() {
         logRunnable?.let { handler.removeCallbacks(it) }
         audioTrack?.let { try { it.stop(); it.release() } catch (e: Exception) {} }
         audioTrack = null
+        acousticMonitorRunning = false
+        audioRecord?.let { try { it.stop(); it.release() } catch (e: Exception) {} }
+        audioRecord = null
         activeGatt?.close()
         activeGatt = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -296,6 +366,14 @@ class BatteryLoggingService : Service() {
     fun getFullLog() = logHistory.toString()
     fun getLastKnownRssi() = lastKnownRssi
     fun getTotalGlitches() = totalGlitches
+    fun getRssiQualityText() = latestRssiQualityText
+    fun getAcousticContinuityText(): String {
+        if (!enableAudioMonitor || silentMode) return "N/A"
+        if (acousticSamples == 0) return "--%"
+        val uptime = acousticDetectedSamples * 100.0 / acousticSamples
+        return String.format(Locale.US, "%.0f%% (%d lost)", uptime, acousticLostEvents)
+    }
+    fun getUnexpectedRouteChanges() = unexpectedRouteChanges
     fun clearHistory() { logHistory.setLength(0) }
     fun setLogUpdateListener(listener: ((String) -> Unit)?) { this.onLogUpdateListener = listener }
 
@@ -364,6 +442,86 @@ class BatteryLoggingService : Service() {
         if (adapter != null && !adapter.isDiscovering && ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
             runCatching { adapter.startDiscovery() }
         }
+    }
+
+    private fun resetQualityMetrics() {
+        rssiWindow.clear()
+        lastRoute = null
+        unexpectedRouteChanges = 0
+        acousticSamples = 0
+        acousticDetectedSamples = 0
+        acousticLostEvents = 0
+        lastAcousticDetected = null
+        latestRssiQualityText = "N/A"
+    }
+
+    private fun updateRssiQuality(rssi: Int?): String {
+        if (rssi == null) {
+            latestRssiQualityText = "N/A"
+            return latestRssiQualityText
+        }
+        rssiWindow.addLast(rssi)
+        while (rssiWindow.size > 12) rssiWindow.removeFirst()
+
+        val values = rssiWindow.toList()
+        val avg = values.average()
+        val min = values.minOrNull() ?: rssi
+        val variance = values.map { (it - avg).pow(2) }.average()
+        val stdDev = sqrt(variance)
+        val score = (100 - ((-avg - 45) * 1.4) - (stdDev * 4.0)).toInt().coerceIn(0, 100)
+        latestRssiQualityText = String.format(Locale.US, "%d/100 avg=%.0f min=%d sd=%.1f", score, avg, min, stdDev)
+        return latestRssiQualityText
+    }
+
+    private fun updateRouteQuality(route: String): String {
+        val previous = lastRoute
+        if (previous != null && previous != route) {
+            unexpectedRouteChanges += 1
+            addLog("Route changed: $previous -> $route")
+        }
+        lastRoute = route
+        return route
+    }
+
+    private fun updateAcousticContinuity(samples: ShortArray, read: Int) {
+        val magnitude = goertzel(samples, read, 440.0, 44100)
+        val rms = calculateRms(samples, read)
+        val detected = magnitude > 250_000.0 && rms > 20.0
+        acousticSamples += 1
+        if (detected) acousticDetectedSamples += 1
+
+        val previous = lastAcousticDetected
+        if (previous == true && !detected) {
+            acousticLostEvents += 1
+            addLog("Acoustic output LOST (phone buffer still monitored)")
+        } else if (previous == false && detected) {
+            addLog("Acoustic output DETECTED")
+        }
+        lastAcousticDetected = detected
+    }
+
+    private fun goertzel(samples: ShortArray, read: Int, targetFreq: Double, sampleRate: Int): Double {
+        val n = read.coerceAtMost(samples.size)
+        if (n <= 1) return 0.0
+        val k = (0.5 + (n * targetFreq / sampleRate)).toInt()
+        val omega = 2.0 * PI * k / n
+        val coeff = 2.0 * cos(omega)
+        var q1 = 0.0
+        var q2 = 0.0
+        for (i in 0 until n) {
+            val q0 = coeff * q1 - q2 + samples[i]
+            q2 = q1
+            q1 = q0
+        }
+        return sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2)
+    }
+
+    private fun calculateRms(samples: ShortArray, read: Int): Double {
+        val n = read.coerceAtMost(samples.size)
+        if (n == 0) return 0.0
+        var sum = 0.0
+        for (i in 0 until n) sum += samples[i].toDouble() * samples[i]
+        return sqrt(sum / n)
     }
 
     private fun hasScanPermission(): Boolean {

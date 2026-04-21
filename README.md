@@ -14,7 +14,7 @@ The current app is organized around a side navigation drawer with several test p
 - **Stress Test**: Automated A2DP connect/disconnect/play loops with connection KPI (latency, success rate) tracking and **CSV log persistence**.
 - **Media Control**: AVRCP media-key automation, rapid stress loops, volume cycling, and stereo channel check playback.
 - **HFP / SCO Stress**: Manual and automated A2DP to HFP (call mode) switching.
-- **Stability Monitor**: Background-capable battery, RSSI, route, and glitch monitoring with **structured CSV export**.
+- **Stability Monitor**: Background-capable battery, RSSI, route, acoustic continuity, and quality-score monitoring with **structured CSV export**.
 - **Acoustic**: Stereo loopback diagnostics with Normal / SWAP / single-channel tone modes, microphone analysis, and automated channel checks.
 - **Audio Clock Drift**: Acoustic clock offset analysis using a 1kHz reference signal, with SNR-based environment quality monitoring.
 - **Volume Linearity**: Automatic 16-step (0-15) volume gain consistency check.
@@ -190,6 +190,9 @@ UI sections:
   - current battery percentage
   - current RSSI (dBm) strength
   - current glitch count
+  - RF quality score based on a sliding RSSI window
+  - acoustic continuity uptime when audible monitoring is enabled
+  - unexpected audio route change count
   - current target device
 - **Logger settings** card
   - logging interval input
@@ -207,6 +210,9 @@ Behavior:
 - **Glitches Detection**: Monitors internal Android AudioTrack underruns (Phone Buffer) to identify if the phone's CPU or system is causing audio drops.
 - **Foreground Service**: Uses `BatteryLoggingService` to continue polling even when the app is in the background or the screen is off.
 - **Audio Route Tracking**: Captures whether playback is currently on BT A2DP, BT SCO, or the internal speaker.
+- **RF Quality Score**: Calculates a sliding-window RSSI score using recent average, minimum, and variation to expose unstable links that may not show up as phone-side underruns.
+- **Acoustic Continuity Uptime**: In non-silent audio monitor mode, records the microphone feedback of the generated 440Hz monitor tone and reports detected-output uptime plus lost events.
+- **Unexpected Route Change Counter**: Tracks route transitions during a monitoring session to flag playback path instability.
 - **RSSI Tracking**: Tries GATT RSSI first and falls back to short discovery scans when needed.
 - **Event Monitoring**: Logs ACL connection/disconnection events in real-time.
 - **Battery Fallback Paths**: Tries the platform battery API first, then falls back to BLE GATT Battery Service reads when the device exposes them.
@@ -424,6 +430,7 @@ This workflow is intended for internal testing distribution. It currently builds
 - `BLUETOOTH_ADVERTISE`
 - `FOREGROUND_SERVICE`
 - `FOREGROUND_SERVICE_CONNECTED_DEVICE`
+- `FOREGROUND_SERVICE_MICROPHONE`
 - `POST_NOTIFICATIONS`
 
 Manifest also declares:

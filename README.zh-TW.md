@@ -14,7 +14,7 @@ BT Android Agent 2 是一個面向 Android 12+ 裝置的藍牙驗證工具，主
 - **Stress Test**：自動化 A2DP 連線/斷線/播放循環測試，具備連線 KPI 統計與 **CSV 日誌持久化**功能。
 - **Media Control**：AVRCP 媒體鍵自動化、Rapid Stress、音量循環與左右聲道檢查。
 - **HFP / SCO Stress**：手動與自動 A2DP 至 HFP (通話模式) 切換測試。
-- **Stability Monitor**：支援背景執行的電量、RSSI、音訊路由與 glitch 記錄，並自動**匯出為結構化 CSV**。
+- **Stability Monitor**：支援背景執行的電量、RSSI、音訊路由、聲學連續性與品質分數監測，並自動**匯出為結構化 CSV**。
 - **Acoustic**：立體聲 loopback 診斷，支援 Normal / SWAP / 單聲道測試模式、麥克風分析與自動聲道檢查。
 - **Audio Clock Drift**：透過 1kHz 聲學 loopback 做時鐘漂移與 PPM 偏移分析，並提供 SNR 環境品質監看。
 - **Volume Linearity**：自動化音量線性度與 16 階步階分析。
@@ -191,6 +191,9 @@ Stability Monitor 頁面用來做背景式電量、RSSI、音訊路由與 phone-
   - 目前電量百分比
   - 目前 RSSI（dBm）
   - 目前 glitches 計數
+  - 基於 sliding RSSI window 的 RF quality score
+  - 非 silent 監測模式下的 acoustic continuity uptime
+  - 非預期 audio route change 計數
   - 目前目標裝置
 - **Logger Settings** 卡片
   - interval input
@@ -208,6 +211,9 @@ Stability Monitor 頁面用來做背景式電量、RSSI、音訊路由與 phone-
 - **Glitches Detection**：透過 Android `AudioTrack` underrun count 觀察 phone buffer 端是否發生掉音風險。
 - **Foreground Service**：透過 `BatteryLoggingService` 在 app 退到背景或螢幕關閉後仍持續記錄。
 - **Audio Route Tracking**：可記錄目前是 `BT_A2DP`、`BT_SCO` 或 `INTERNAL_SPEAKER`。
+- **RF Quality Score**：以最近 RSSI 平均值、最低值與波動量計算 sliding-window 分數，用來觀察不一定會造成手機端 underrun 的連線不穩。
+- **Acoustic Continuity Uptime**：在非 silent audio monitor 模式下，透過麥克風回錄 440Hz monitor tone，統計實際聲學輸出 uptime 與 lost events。
+- **Unexpected Route Change Counter**：統計監測期間 audio route 轉換次數，用來標記播放路徑不穩定。
 - **RSSI 追蹤**：會先嘗試以 GATT 讀取 RSSI，必要時再退回短暫 discovery 方式補抓。
 - **事件監控**：會即時記錄 ACL connected / disconnected 事件。
 - **電量備援路徑**：會先嘗試平台 battery API，若裝置有提供 BLE GATT Battery Service，也會用它做補讀。
@@ -424,6 +430,7 @@ tools/
 - `BLUETOOTH_ADVERTISE`
 - `FOREGROUND_SERVICE`
 - `FOREGROUND_SERVICE_CONNECTED_DEVICE`
+- `FOREGROUND_SERVICE_MICROPHONE`
 - `POST_NOTIFICATIONS`
 
 Manifest 也宣告了：
