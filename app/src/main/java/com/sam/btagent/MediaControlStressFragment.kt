@@ -2,9 +2,13 @@ package com.sam.btagent
 
 import android.content.Context
 import android.media.AudioManager
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -12,12 +16,12 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.sam.btagent.databinding.FragmentMediaControlStressBinding
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.random.Random
 
-class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
+class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, TextToSpeech.OnInitListener {
 
     private var _binding: FragmentMediaControlStressBinding? = null
     private val binding get() = _binding!!
@@ -25,6 +29,18 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
     private lateinit var audioManager: AudioManager
     private var isAutoTesting = false
     private var testThread: Thread? = null
+
+    // Stereo Test (File Based with TTS Pre-generation)
+    private var isStereoTesting = false
+    private var tts: TextToSpeech? = null
+    private var stereoPlayer: MediaPlayer? = null
+    private var currentStereoMode = StereoMode.NONE
+
+    private enum class StereoMode { NONE, LEFT_ONLY, RIGHT_ONLY, ALTERNATING }
+
+    private val FILE_LEFT = "test_left_30s.wav"
+    private val FILE_RIGHT = "test_right_30s.wav"
+    private val FILE_ALT = "test_alt_30s.wav"
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -38,6 +54,12 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        
+        // 1. 初始禁用按鈕
+        setStereoButtonsEnabled(false)
+
+        // Initialize TTS
+        tts = TextToSpeech(requireContext(), this)
 
         // Manual Controls
         binding.openSpotifyButton.setOnClickListener { openSpotify() }
@@ -48,11 +70,9 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         
         binding.volUpButton.setOnClickListener { 
             audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
-            log("Manual Vol Up")
         }
         binding.volDownButton.setOnClickListener { 
             audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
-            log("Manual Vol Down")
         }
 
         // Automation Controls
@@ -60,17 +80,135 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         binding.startRapidPlayButton.setOnClickListener { startRapidPlayPause() }
         binding.stopAutoButton.setOnClickListener { stopAutomation() }
         binding.clearLogButton.setOnClickListener { clearLog() }
+
+        // Stereo Check (File Based)
+        binding.btnLeftOnly.setOnClickListener { startFileStereoTest(StereoMode.LEFT_ONLY) }
+        binding.btnRightOnly.setOnClickListener { startFileStereoTest(StereoMode.RIGHT_ONLY) }
+        binding.btnAlternating.setOnClickListener { startFileStereoTest(StereoMode.ALTERNATING) }
+        binding.btnStopStereoTest.setOnClickListener { stopStereoTest() }
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.language = Locale.US
+            log("TTS Ready for resource generation")
+            
+            // 設定監聽器，當最後一個檔案合成完成時啟用按鈕
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId == "GEN_$FILE_ALT") {
+                        activity?.runOnUiThread {
+                            log("All test resources are ready.")
+                            setStereoButtonsEnabled(true)
+                        }
+                    }
+                }
+                override fun onError(utteranceId: String?) {
+                    activity?.runOnUiThread { log("Error generating resource: $utteranceId") }
+                }
+            })
+            
+            checkAndPrepareFiles()
+        }
+    }
+
+    private fun setStereoButtonsEnabled(enabled: Boolean) {
+        binding.btnLeftOnly.isEnabled = enabled
+        binding.btnRightOnly.isEnabled = enabled
+        binding.btnAlternating.isEnabled = enabled
+        
+        if (!enabled) {
+            binding.tvStereoStatus.visibility = View.VISIBLE
+            binding.tvStereoStatus.text = "Preparing resources..."
+        } else {
+            binding.tvStereoStatus.text = "Resources Ready"
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isStereoTesting && _binding != null) binding.tvStereoStatus.visibility = View.GONE
+            }, 2000)
+        }
+    }
+
+    private fun checkAndPrepareFiles() {
+        val t = tts ?: return
+        val context = requireContext()
+        val resDir = LogPersistenceManager.getResourceDir()
+        
+        val fLeft = File(resDir, FILE_LEFT)
+        val fRight = File(resDir, FILE_RIGHT)
+        val fAlt = File(resDir, FILE_ALT)
+
+        // 如果檔案都已經存在且有效，直接啟用按鈕
+        if (fLeft.exists() && fRight.exists() && fAlt.exists() && fLeft.length() > 1000) {
+            log("Test resources found. Enabling buttons.")
+            setStereoButtonsEnabled(true)
+            return
+        }
+
+        log("Generating new test resources (approx 3-5 seconds)...")
+        // 按順序產生，最後一個產生 FILE_ALT 會觸發 onDone 啟用按鈕
+        LogPersistenceManager.generateTestWav(context, t, "Left channel. Left channel. Left channel.", FILE_LEFT, -1.0f)
+        LogPersistenceManager.generateTestWav(context, t, "Right channel. Right channel. Right channel.", FILE_RIGHT, 1.0f)
+        LogPersistenceManager.generateTestWav(context, t, "Left. Right. Left. Right.", FILE_ALT, 0.0f)
+    }
+
+    private fun startFileStereoTest(mode: StereoMode) {
+        stopStereoTest()
+        stopAutomation()
+
+        isStereoTesting = true
+        currentStereoMode = mode
+        
+        val fileName = when(mode) {
+            StereoMode.LEFT_ONLY -> FILE_LEFT
+            StereoMode.RIGHT_ONLY -> FILE_RIGHT
+            StereoMode.ALTERNATING -> FILE_ALT
+            else -> return
+        }
+
+        val file = File(LogPersistenceManager.getResourceDir(), fileName)
+        if (!file.exists()) {
+            Toast.makeText(context, "File missing, re-generating...", Toast.LENGTH_SHORT).show()
+            checkAndPrepareFiles()
+            return
+        }
+
+        log("Playing: $fileName")
+        binding.tvStereoStatus.visibility = View.VISIBLE
+        binding.tvStereoStatus.text = "Playing: ${mode.name}"
+
+        try {
+            stereoPlayer = MediaPlayer.create(requireContext(), Uri.fromFile(file)).apply {
+                isLooping = true
+                start()
+            }
+        } catch (e: Exception) {
+            log("Playback failed: ${e.message}")
+        }
+    }
+
+    private fun stopStereoTest() {
+        isStereoTesting = false
+        try {
+            stereoPlayer?.stop()
+            stereoPlayer?.release()
+        } catch (e: Exception) {}
+        stereoPlayer = null
+        
+        activity?.runOnUiThread {
+            binding.tvStereoStatus.text = "Stopped"
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isStereoTesting && _binding != null) {
+                    binding.tvStereoStatus.visibility = View.GONE
+                }
+            }, 2000)
+        }
     }
 
     private fun openSpotify() {
         val intent = requireContext().packageManager.getLaunchIntentForPackage("com.spotify.music")
-        if (intent != null) {
-            startActivity(intent)
-            log("Opening Spotify...")
-        } else {
-            Toast.makeText(context, "Spotify is not installed.", Toast.LENGTH_SHORT).show()
-            log("Spotify not found. Please open your music app manually.")
-        }
+        if (intent != null) startActivity(intent)
+        else log("Spotify not found.")
     }
 
     private fun sendMediaKey(keyCode: Int) {
@@ -78,22 +216,6 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         audioManager.dispatchMediaKeyEvent(eventDown)
         val eventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
         audioManager.dispatchMediaKeyEvent(eventUp)
-        
-        val actionName = when(keyCode) {
-            KeyEvent.KEYCODE_MEDIA_PLAY -> "PLAY"
-            KeyEvent.KEYCODE_MEDIA_PAUSE -> "PAUSE"
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> "PLAY/PAUSE"
-            KeyEvent.KEYCODE_MEDIA_STOP -> "STOP"
-            KeyEvent.KEYCODE_MEDIA_NEXT -> "NEXT"
-            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "PREV"
-            else -> "KEY_$keyCode"
-        }
-        
-        updateStatus("Manual: $actionName")
-        log("Sent Media Key: $actionName")
-        
-        // Context log for all key events
-        activity?.let { LogPersistenceManager.persistLog(it.applicationContext, "MediaControl", "Key Sent: $actionName") }
     }
 
     private fun startVolumeCycle() {
@@ -103,64 +225,47 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         
         isAutoTesting = true
         updateUiForTest(true)
-        updateStatus("Auto: Vol Cycle (${interval}ms)")
-        log("Starting Volume Cycle Stress ($minPct% to $maxPct%, Interval: ${interval}ms)")
-
         testThread = Thread {
             try {
                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                val minVolIndex = (maxVol * (minPct / 100f)).toInt().coerceIn(0, maxVol)
-                val maxVolIndex = (maxVol * (maxPct / 100f)).toInt().coerceIn(0, maxVol)
+                val minVolLimit = (maxVol * minPct / 100).coerceAtLeast(0)
+                val maxVolLimit = (maxVol * maxPct / 100).coerceAtMost(maxVol)
                 
-                var increasing = true
-                // Initialize to min
-                activity?.runOnUiThread {
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, minVolIndex, 0)
-                }
-                
+                log("Starting Volume Cycle: $minVolLimit to $maxVolLimit (Max: $maxVol)")
+                var up = true
                 while (isAutoTesting) {
-                    val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                    
-                    if (increasing) {
+                    val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    if (up) {
                         audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0)
-                        if (currentVol >= maxVolIndex) increasing = false
+                        if (current >= maxVolLimit) up = false
                     } else {
                         audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0)
-                        if (currentVol <= minVolIndex) increasing = true
+                        if (current <= minVolLimit) up = true
                     }
-                    
-                    val currentPct = if (maxVol > 0) (currentVol.toFloat() / maxVol * 100).toInt() else 0
-                    log("Vol Auto Adj: $currentPct% ($currentVol/$maxVol)")
-                    activity?.let { LogPersistenceManager.persistLog(it.applicationContext, "MediaStress", "Vol Adj: $currentPct%") }
                     Thread.sleep(interval)
                 }
-            } catch (e: InterruptedException) {
-                // Thread stopped
             } catch (e: Exception) {
-                log("Vol Cycle Error: ${e.message}")
-                handleTestError("VolCycle: ${e.message}")
-            } finally {
-                activity?.runOnUiThread { updateUiForTest(false) }
+                log("Volume Cycle Error: ${e.message}")
+            } finally { 
+                activity?.runOnUiThread { updateUiForTest(false) } 
             }
         }
         testThread?.start()
     }
 
     private fun startRapidPlayPause() {
-        val loopInput = binding.rapidLoopCountInput.text.toString().toIntOrNull() ?: 100
-        val isNonStop = binding.cbNonStop.isChecked
-        val actualLoops = if (isNonStop) Int.MAX_VALUE else loopInput.coerceIn(1, 9999)
-
         val baseInterval = binding.rapidIntervalInput.text.toString().toLongOrNull() ?: 1000L
-        val randomRange = binding.randomRangeInput.text.toString().toIntOrNull() ?: 500
+        val randomRange = binding.randomRangeInput.text.toString().toLongOrNull() ?: 0L
+        val isNonStop = binding.cbNonStop.isChecked
+        val loopLimit = if (isNonStop) Int.MAX_VALUE else (binding.rapidLoopCountInput.text.toString().toIntOrNull() ?: 100)
         
-        val selectedKeys = mutableListOf<Int>()
-        if (binding.cbPlayPause.isChecked) selectedKeys.add(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
-        if (binding.cbNext.isChecked) selectedKeys.add(KeyEvent.KEYCODE_MEDIA_NEXT)
-        if (binding.cbPrev.isChecked) selectedKeys.add(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
-        if (binding.cbStop.isChecked) selectedKeys.add(KeyEvent.KEYCODE_MEDIA_STOP)
+        val commands = mutableListOf<Int>()
+        if (binding.cbPlayPause.isChecked) commands.add(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+        if (binding.cbNext.isChecked) commands.add(KeyEvent.KEYCODE_MEDIA_NEXT)
+        if (binding.cbPrev.isChecked) commands.add(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+        if (binding.cbStop.isChecked) commands.add(KeyEvent.KEYCODE_MEDIA_STOP)
         
-        if (selectedKeys.isEmpty()) {
+        if (commands.isEmpty()) {
             Toast.makeText(context, "Please select at least one command", Toast.LENGTH_SHORT).show()
             return
         }
@@ -168,46 +273,44 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
         isAutoTesting = true
         updateUiForTest(true)
         
-        val limitStr = if(isNonStop) "Non-stop" else "$actualLoops loops"
-        log("Starting Rapid Stress ($limitStr, Base: ${baseInterval}ms, Random: 0-$randomRange, Keys: ${selectedKeys.size})")
-
-        binding.rapidProgressBar.visibility = View.VISIBLE
-        binding.rapidProgressBar.isIndeterminate = isNonStop
         if (!isNonStop) {
-            binding.rapidProgressBar.max = actualLoops
+            binding.rapidProgressBar.visibility = View.VISIBLE
+            binding.rapidProgressBar.max = loopLimit
             binding.rapidProgressBar.progress = 0
         }
 
         testThread = Thread {
             try {
                 var count = 0
-                while (isAutoTesting && count < actualLoops) {
-                    val extraDelay = if (randomRange > 0) Random.nextInt(1, randomRange + 1) else 0
-                    val totalDelay = baseInterval + extraDelay
-                    
-                    val keyCode = selectedKeys[count % selectedKeys.size]
-                    
+                while (isAutoTesting && count < loopLimit) {
+                    val cmd = commands.random()
+                    sendMediaKey(cmd)
                     count++
+                    
+                    val currentCount = count
                     activity?.runOnUiThread {
-                        updateStatus("Auto: Rapid Cmd $count/$limitStr")
-                        if (!isNonStop && _binding != null) {
-                            binding.rapidProgressBar.progress = count
-                        }
+                        binding.currentStatusText.text = "Status: Running ($currentCount/$loopLimit)"
+                        if (!isNonStop) binding.rapidProgressBar.progress = currentCount
                     }
+
+                    val sleepTime = if (randomRange > 0) {
+                        baseInterval + ((-randomRange..randomRange).random())
+                    } else {
+                        baseInterval
+                    }.coerceAtLeast(10L)
                     
-                    sendMediaKey(keyCode)
-                    log("[$count] Key sent, next in ${totalDelay}ms")
-                    
-                    Thread.sleep(totalDelay)
+                    Thread.sleep(sleepTime)
                 }
+                log("Rapid Stress completed $count cycles.")
             } catch (e: InterruptedException) {
-                // Thread stopped
+                log("Rapid Stress interrupted.")
             } catch (e: Exception) {
-                log("Rapid Stress Error: ${e.message}")
+                log("Rapid Stress error: ${e.message}")
             } finally {
-                activity?.runOnUiThread { 
+                activity?.runOnUiThread {
                     updateUiForTest(false)
                     binding.rapidProgressBar.visibility = View.GONE
+                    binding.currentStatusText.text = "Status: Idle"
                 }
             }
         }
@@ -217,83 +320,28 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun stopAutomation() {
         isAutoTesting = false
         testThread?.interrupt()
-        log("Automation stopped.")
-        updateStatus("Stopped")
-        updateUiForTest(false)
-    }
-
-    private fun handleTestError(reason: String) {
-        val stopOnError = binding.swStopOnError.isChecked
-        if (stopOnError) {
-            log("STOP ON ERROR: $reason triggered. Saving snapshot...")
-            activity?.let { LogPersistenceManager.saveErrorSnapshot(it.applicationContext, reason) }
-            isAutoTesting = false
-            testThread?.interrupt()
-            activity?.runOnUiThread {
-                Toast.makeText(context, "Media Test stopped due to error: $reason", Toast.LENGTH_LONG).show()
-                updateUiForTest(false)
-            }
-        } else {
-            activity?.let { LogPersistenceManager.saveErrorSnapshot(it.applicationContext, "MediaSoftError: $reason") }
-        }
-    }
-
-    private fun updateStatus(status: String) {
-        activity?.runOnUiThread {
-            if (_binding != null) {
-                binding.currentStatusText.text = "Status: $status"
-            }
-        }
     }
 
     private fun updateUiForTest(running: Boolean) {
         binding.startVolCycleButton.isEnabled = !running
         binding.startRapidPlayButton.isEnabled = !running
-        binding.volIntervalInput.isEnabled = !running
-        binding.rapidIntervalInput.isEnabled = !running
-        binding.randomRangeInput.isEnabled = !running
-        binding.minVolInput.isEnabled = !running
-        binding.maxVolInput.isEnabled = !running
-        binding.cbPlayPause.isEnabled = !running
-        binding.cbNext.isEnabled = !running
-        binding.cbPrev.isEnabled = !running
-        binding.cbStop.isEnabled = !running
-        binding.cbNonStop.isEnabled = !running
-        binding.rapidLoopCountInput.isEnabled = !running
-        binding.swStopOnError.isEnabled = !running
         binding.stopAutoButton.visibility = if (running) View.VISIBLE else View.GONE
     }
 
     private fun log(message: String) {
-        val timeStamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        activity?.runOnUiThread {
-            if (_binding != null) {
-                binding.mediaLogText.append("[$timeStamp] $message\n")
-                val scrollAmount = binding.mediaLogText.layout?.let { 
-                    it.getLineTop(binding.mediaLogText.lineCount) - binding.mediaLogText.height 
-                } ?: 0
-                if (scrollAmount > 0) {
-                    binding.mediaLogText.scrollTo(0, scrollAmount)
-                }
-            }
-        }
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        activity?.runOnUiThread { if (_binding != null) binding.mediaLogText.append("[$ts] $message\n") }
     }
 
-    private fun clearLog() {
-        binding.mediaLogText.text = ""
-        log("Log cleared.")
-    }
+    private fun clearLog() { binding.mediaLogText.text = "" }
 
-    override fun isTestRunning(): Boolean {
-        return isAutoTesting
-    }
-
-    override fun stopTest() {
-        stopAutomation()
-    }
+    override fun isTestRunning(): Boolean = isAutoTesting || isStereoTesting
+    override fun stopTest() { stopAutomation(); stopStereoTest() }
 
     override fun onDestroyView() {
         stopAutomation()
+        stopStereoTest()
+        tts?.shutdown()
         super.onDestroyView()
         _binding = null
     }

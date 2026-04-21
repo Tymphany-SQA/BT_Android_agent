@@ -1,9 +1,15 @@
 package com.sam.btagent
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.MenuItem
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
 import com.google.android.material.navigation.NavigationView
@@ -13,6 +19,15 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var drawerToggle: ActionBarDrawerToggle
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (!allGranted) {
+            Toast.makeText(this, "Permissions required for full functionality.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     interface TestStatusProvider {
         fun isTestRunning(): Boolean
@@ -46,6 +61,7 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
         binding.navView.setNavigationItemSelectedListener(this)
 
         updateNavHeaderVersion()
+        checkPermissions()
 
         if (savedInstanceState == null) {
             // Default to Dashboard
@@ -67,6 +83,32 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
         return true
     }
 
+    private fun checkPermissions() {
+        val permissions = mutableListOf<String>()
+        
+        // Bluetooth Permissions (Android 12+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+        } else {
+            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+        // Notification Permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val toRequest = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (toRequest.isNotEmpty()) {
+            requestPermissionLauncher.launch(toRequest.toTypedArray())
+        }
+    }
+
     private fun navigateToItem(itemId: Int) {
         val fragment: Fragment = when (itemId) {
             R.id.nav_dashboard -> DashboardFragment()
@@ -77,6 +119,7 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
             R.id.nav_acoustic_loopback -> AcousticLoopbackFragment()
             R.id.nav_volume_linearity -> VolumeLinearityFragment()
             R.id.nav_audio_latency -> AudioLatencyFragment()
+            R.id.nav_clock_drift -> AudioClockDriftFragment()
             R.id.nav_log_viewer -> LogViewerFragment()
             R.id.nav_about -> AboutFragment()
             else -> DashboardFragment()
@@ -87,7 +130,7 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
             R.id.nav_stress_test -> "Stress Test"
             R.id.nav_media_control -> "Media Control"
             R.id.nav_hfp_stress -> "HFP / SCO Stress"
-            R.id.nav_battery_monitor -> "Battery Monitor"
+            R.id.nav_battery_monitor -> "Stability Monitor"
             R.id.nav_acoustic_loopback -> "Acoustic Loopback"
             R.id.nav_volume_linearity -> "Volume Linearity"
             R.id.nav_audio_latency -> "Audio Latency"

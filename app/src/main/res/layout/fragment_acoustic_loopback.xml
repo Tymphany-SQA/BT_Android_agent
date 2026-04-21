@@ -10,7 +10,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Acoustic Loopback"
+        android:text="Stereo Channel Monitor"
         android:textAppearance="@style/TextAppearance.Material3.HeadlineSmall"
         android:textStyle="bold"
         android:layout_marginBottom="16dp"/>
@@ -19,7 +19,7 @@
     <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="12dp"
         app:cardCornerRadius="12dp">
 
         <LinearLayout
@@ -31,7 +31,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Tone Generator (1kHz)"
+                android:text="Tone Generator (L: 1kHz / R: 2kHz)"
                 android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
                 android:layout_marginBottom="8dp"/>
 
@@ -39,7 +39,7 @@
                 android:id="@+id/btnToggleTone"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Start 1kHz Tone"/>
+                android:text="Start Stereo Test Tone"/>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -47,7 +47,7 @@
     <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="12dp"
         app:cardCornerRadius="12dp">
 
         <LinearLayout
@@ -59,14 +59,14 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Real-time Monitor"
+                android:text="Microphone Analysis"
                 android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                android:layout_marginBottom="16dp"/>
+                android:layout_marginBottom="12dp"/>
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Input Level:"/>
+                android:text="Input RMS Level:"/>
 
             <ProgressBar
                 android:id="@+id/levelProgressBar"
@@ -78,20 +78,23 @@
                 android:max="100"
                 android:progress="0"/>
 
+            <!-- Left Channel Row -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="1kHz Detection Status:"/>
+                    android:text="LEFT Channel (1kHz):"
+                    android:textStyle="bold"/>
 
                 <TextView
-                    android:id="@+id/statusIndicator"
+                    android:id="@+id/statusLeft"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="IDLE"
@@ -103,12 +106,46 @@
             </LinearLayout>
 
             <TextView
-                android:id="@+id/magnitudeText"
+                android:id="@+id/magLeftText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Magnitude: 0.0"
+                android:text="Mag: 0.0"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                android:layout_marginTop="8dp"/>
+                android:layout_marginBottom="12dp"/>
+
+            <!-- Right Channel Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="RIGHT Channel (2kHz):"
+                    android:textStyle="bold"/>
+
+                <TextView
+                    android:id="@+id/statusRight"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="IDLE"
+                    android:textStyle="bold"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="4dp"
+                    android:background="#DDDDDD"
+                    android:textColor="#FFFFFF"/>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/magRightText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Mag: 0.0"
+                android:textAppearance="@style/TextAppearance.Material3.BodySmall"/>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -128,7 +165,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Event Log"
+                android:text="Stereo Event Log"
                 android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
                 android:layout_marginBottom="8dp"/>
 

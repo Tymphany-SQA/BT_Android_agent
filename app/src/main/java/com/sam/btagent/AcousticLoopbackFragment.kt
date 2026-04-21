@@ -27,9 +27,12 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
     // Audio Settings
     private val sampleRate = 44100
-    private val targetFreq = 1000.0
+    private val freqLeft = 1000.0
+    private val freqRight = 2000.0
     private var isRunning = false
-    private var lastDetectionState = false
+    
+    private var lastLeftDetected = false
+    private var lastRightDetected = false
 
     // Tone Generation
     private var audioTrack: AudioTrack? = null
@@ -69,11 +72,9 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
         isRunning = true
         isPlayingTone = true
-        binding.btnToggleTone.text = "Stop 1kHz Tone"
-        binding.statusIndicator.text = "MONITORING"
-        binding.statusIndicator.setBackgroundColor(ContextCompat.getColor(requireContext(), android.R.color.holo_orange_dark))
+        binding.btnToggleTone.text = "Stop Stereo Test"
         
-        addLog("Starting 1kHz loopback test...")
+        addLog("Starting Stereo Loopback (L:1k, R:2k)...")
         
         startTone()
         startAnalysis()
@@ -82,10 +83,13 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun stopLoopback() {
         isRunning = false
         isPlayingTone = false
-        binding.btnToggleTone.text = "Start 1kHz Tone"
-        binding.statusIndicator.text = "IDLE"
-        binding.statusIndicator.setBackgroundColor(0xFFDDDDDD.toInt())
+        binding.btnToggleTone.text = "Start Stereo Test"
         
+        binding.statusLeft.text = "IDLE"
+        binding.statusLeft.setBackgroundColor(0xFFDDDDDD.toInt())
+        binding.statusRight.text = "IDLE"
+        binding.statusRight.setBackgroundColor(0xFFDDDDDD.toInt())
+
         stopTone()
         stopAnalysis()
         addLog("Test stopped.")
@@ -93,40 +97,50 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun startTone() {
         val bufferSize = AudioTrack.getMinBufferSize(
-            sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
+            sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT
         )
         if (bufferSize <= 0) return
 
         try {
-            audioTrack = AudioTrack(
-                android.media.AudioManager.STREAM_MUSIC,
-                sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize,
-                AudioTrack.MODE_STREAM
-            )
+            audioTrack = AudioTrack.Builder()
+                .setAudioAttributes(android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build())
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                    .build())
+                .setBufferSizeInBytes(bufferSize)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
 
-            if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
-                addLog("Error: AudioTrack not initialized")
-                return
-            }
+            val samples = ShortArray(bufferSize) // This buffer size is in bytes, so ShortArray(bufferSize) is actually twice the needed size, but it's safe. 
+            // Better to use actual frame count
+            val frameCount = bufferSize / 4 // 2 bytes per sample, 2 channels
+            val stereoSamples = ShortArray(frameCount * 2)
 
-            val samples = ShortArray(bufferSize)
-            var phase = 0.0
-            val phaseIncrement = 2 * PI * targetFreq / sampleRate
+            var phaseL = 0.0
+            var phaseR = 0.0
+            val phaseIncL = 2 * PI * freqLeft / sampleRate
+            val phaseIncR = 2 * PI * freqRight / sampleRate
 
             audioTrack?.play()
 
             Thread {
                 try {
                     while (isPlayingTone && audioTrack != null) {
-                        for (i in samples.indices) {
-                            samples[i] = (sin(phase) * Short.MAX_VALUE).toInt().toShort()
-                            phase += phaseIncrement
-                            if (phase > 2 * PI) phase -= 2 * PI
+                        for (i in 0 until frameCount) {
+                            stereoSamples[i * 2] = (sin(phaseL) * 16384).toInt().toShort()
+                            stereoSamples[i * 2 + 1] = (sin(phaseR) * 16384).toInt().toShort()
+                            
+                            phaseL += phaseIncL
+                            if (phaseL > 2 * PI) phaseL -= 2 * PI
+                            phaseR += phaseIncR
+                            if (phaseR > 2 * PI) phaseR -= 2 * PI
                         }
-                        audioTrack?.write(samples, 0, samples.size)
+                        audioTrack?.write(stereoSamples, 0, stereoSamples.size)
                     }
                 } catch (e: Exception) {
                     activity?.runOnUiThread { addLog("Tone Error: ${e.message}") }
@@ -139,8 +153,10 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun stopTone() {
         isPlayingTone = false
-        audioTrack?.stop()
-        audioTrack?.release()
+        try {
+            audioTrack?.stop()
+            audioTrack?.release()
+        } catch (e: Exception) {}
         audioTrack = null
     }
 
@@ -164,34 +180,24 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
                 bufferSize
             )
 
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                addLog("Error: AudioRecord not initialized")
-                return
-            }
-
             audioRecord?.startRecording()
 
             analysisThread = Thread {
                 val buffer = ShortArray(1024)
-                try {
-                    while (isRunning && audioRecord != null) {
-                        val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                        if (read > 0) {
-                            val magnitude = goertzel(buffer, targetFreq, sampleRate)
-                            val rms = calculateRMS(buffer)
-                            
-                            activity?.runOnUiThread {
-                                updateUI(magnitude, rms)
-                            }
+                while (isRunning && audioRecord != null) {
+                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    if (read > 0) {
+                        val magL = goertzel(buffer, freqLeft, sampleRate)
+                        val magR = goertzel(buffer, freqRight, sampleRate)
+                        val rms = calculateRMS(buffer)
+                        
+                        activity?.runOnUiThread {
+                            updateUI(magL, magR, rms)
                         }
                     }
-                } catch (e: Exception) {
-                    activity?.runOnUiThread { addLog("Analysis Error: ${e.message}") }
                 }
             }
             analysisThread?.start()
-        } catch (e: SecurityException) {
-            addLog("Security Error: ${e.message}")
         } catch (e: Exception) {
             addLog("Setup Error: ${e.message}")
         }
@@ -199,8 +205,10 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun stopAnalysis() {
         isRunning = false
-        audioRecord?.stop()
-        audioRecord?.release()
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (e: Exception) {}
         audioRecord = null
         analysisThread = null
     }
@@ -228,40 +236,43 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun calculateRMS(samples: ShortArray): Double {
         var sum = 0.0
-        for (sample in samples) {
-            sum += sample * sample
-        }
+        for (sample in samples) sum += sample * sample
         return sqrt(sum / samples.size)
     }
 
-    private fun updateUI(magnitude: Double, rms: Double) {
+    private fun updateUI(magL: Double, magR: Double, rms: Double) {
         if (!isRunning) return
 
-        // Normalize RMS to 0-100 for progress bar
         val level = (rms / 32768.0 * 100 * 5).coerceIn(0.0, 100.0).toInt()
         binding.levelProgressBar.progress = level
 
-        binding.magnitudeText.text = String.format(Locale.US, "Magnitude (1kHz): %.1f", magnitude)
+        binding.magLeftText.text = String.format(Locale.US, "Mag: %.1f", magL)
+        binding.magRightText.text = String.format(Locale.US, "Mag: %.1f", magR)
 
-        // Threshold check for 1kHz detection
-        val detectionThreshold = 75000.0 // Adjusted for better sensitivity
-        val isDetected = magnitude > detectionThreshold
+        val threshold = 60000.0 
+        val leftDetected = magL > threshold
+        val rightDetected = magR > threshold
 
-        if (isDetected != lastDetectionState) {
-            lastDetectionState = isDetected
-            if (isDetected) {
-                addLog("1kHz Tone DETECTED")
-            } else {
-                addLog("1kHz Tone LOST")
-            }
+        if (leftDetected != lastLeftDetected) {
+            lastLeftDetected = leftDetected
+            addLog(if (leftDetected) "Left (1kHz) RECOVERED" else "Left (1kHz) DROPPED")
+        }
+        if (rightDetected != lastRightDetected) {
+            lastRightDetected = rightDetected
+            addLog(if (rightDetected) "Right (2kHz) RECOVERED" else "Right (2kHz) DROPPED")
         }
 
-        if (isDetected) {
-            binding.statusIndicator.text = "DETECTED"
-            binding.statusIndicator.setBackgroundColor(ContextCompat.getColor(requireContext(), android.R.color.holo_green_dark))
+        updateStatusIndicator(binding.statusLeft, leftDetected)
+        updateStatusIndicator(binding.statusRight, rightDetected)
+    }
+
+    private fun updateStatusIndicator(view: android.widget.TextView, detected: Boolean) {
+        if (detected) {
+            view.text = "OK"
+            view.setBackgroundColor(ContextCompat.getColor(requireContext(), android.R.color.holo_green_dark))
         } else {
-            binding.statusIndicator.text = "NO TONE"
-            binding.statusIndicator.setBackgroundColor(ContextCompat.getColor(requireContext(), android.R.color.holo_red_dark))
+            view.text = "LOST"
+            view.setBackgroundColor(ContextCompat.getColor(requireContext(), android.R.color.holo_red_dark))
         }
     }
 
@@ -269,6 +280,12 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val entry = "[$time] $message\n"
         binding.acousticLogText.append(entry)
+        
+        // Auto-scroll
+        val scrollAmount = binding.acousticLogText.layout?.let { 
+            it.lineCount * binding.acousticLogText.lineHeight - binding.acousticLogText.height 
+        } ?: 0
+        if (scrollAmount > 0) binding.acousticLogText.scrollTo(0, scrollAmount)
     }
 
     override fun isTestRunning(): Boolean = isPlayingTone

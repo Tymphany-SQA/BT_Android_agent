@@ -18,12 +18,11 @@ import android.text.method.ScrollingMovementMethod
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.sam.btagent.databinding.FragmentBatteryMonitorBinding
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
 
@@ -35,24 +34,25 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val localBinder = binder as BatteryLoggingService.LocalBinder
-            service = localBinder.getService()
+            val localBinder = binder as? BatteryLoggingService.LocalBinder
+            val s = localBinder?.getService()
+            service = s
             isBound = true
             
-            service?.let {
-                if (it.isLoggingActive()) {
+            if (s != null) {
+                if (s.isLoggingActive()) {
                     updateLoggingUI(true)
-                    binding.batteryHistoryText.text = it.getFullLog()
+                    binding.batteryHistoryText.text = s.getFullLog()
                     autoScrollLog()
-                    // Update RSSI immediately if bound
-                    updateRssiUI(it.getLastKnownRssi())
+                    updateRssiUI(s.getLastKnownRssi())
+                    updateGlitchesUI(s.getTotalGlitches())
                 }
-                it.setLogUpdateListener { newEntry ->
+                s.setLogUpdateListener { newEntry: String ->
                     activity?.runOnUiThread {
                         binding.batteryHistoryText.append(newEntry)
                         autoScrollLog()
-                        // Extract RSSI from log entry or fetch from service
                         updateRssiUI(service?.getLastKnownRssi())
+                        updateGlitchesUI(service?.getTotalGlitches() ?: 0)
                     }
                 }
             }
@@ -75,25 +75,34 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         }
     }
 
-    override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentBatteryMonitorBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
+        
+        requireActivity().title = getString(R.string.nav_battery_monitor)
         binding.batteryHistoryText.movementMethod = ScrollingMovementMethod()
+        
+        // 資源化 Spinner 選項
+        val adapterOptions = arrayOf(
+            getString(R.string.strategy_standard),
+            getString(R.string.strategy_stable)
+        )
+        val spinnerAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, adapterOptions)
+        spinnerAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.bufferStrategySpinner.adapter = spinnerAdapter
+
         findConnectedDevice()
 
         binding.btnStartBatteryLog.setOnClickListener { startLogging() }
         binding.btnStopBatteryLog.setOnClickListener { stopLogging() }
         binding.btnClearBatteryLog.setOnClickListener {
             binding.batteryHistoryText.text = ""
+            service?.clearHistory()
+            Toast.makeText(requireContext(), R.string.log_cleared_toast, Toast.LENGTH_SHORT).show()
         }
 
         val intent = Intent(requireContext(), BatteryLoggingService::class.java)
@@ -110,26 +119,30 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun findConnectedDevice() {
         val manager = requireContext().getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = manager.adapter
+        val adapter = manager.adapter ?: return
         
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.BLUETOOTH_CONNECT) 
-            != PackageManager.PERMISSION_GRANTED) return
+            != PackageManager.PERMISSION_GRANTED) {
+            binding.targetDeviceName.text = getString(R.string.permission_required)
+            return
+        }
 
         adapter.getProfileProxy(requireContext(), object : BluetoothProfile.ServiceListener {
             override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
-                val connected = proxy.connectedDevices
+                val connected = try { proxy.connectedDevices } catch (e: SecurityException) { emptyList() }
                 if (connected.isNotEmpty()) {
-                    targetDevice = connected[0]
+                    val device = connected[0]
+                    targetDevice = device
                     val deviceName = try {
                         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                            targetDevice?.name ?: targetDevice?.address
+                            device.name ?: device.address
                         } else {
-                            targetDevice?.address
+                            device.address
                         }
-                    } catch (e: SecurityException) {
-                        targetDevice?.address
+                    } catch (e: Exception) {
+                        device.address
                     }
-                    binding.targetDeviceName.text = "Device: $deviceName"
+                    binding.targetDeviceName.text = getString(R.string.battery_device_format, deviceName ?: "Unknown")
                     refreshBatteryNow()
                 }
                 adapter.closeProfileProxy(profile, proxy)
@@ -149,19 +162,23 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         return try {
             val method = device.javaClass.getMethod("getBatteryLevel")
             method.invoke(device) as Int
-        } catch (e: Exception) {
-            -1
-        }
+        } catch (e: Exception) { -1 }
     }
 
     private fun updateCurrentBatteryUI(level: Int) {
         val levelText = if (level >= 0) "$level%" else "--%"
-        binding.currentBatteryText.text = "Current: $levelText"
+        binding.currentBatteryText.text = getString(R.string.battery_current_format, levelText)
     }
 
     private fun updateRssiUI(rssi: Int?) {
-        val rssiText = rssi?.let { "RSSI: $it dBm" } ?: "RSSI: -- dBm"
-        binding.currentRssiText.text = rssiText
+        val rssiValue = rssi?.toString() ?: "--"
+        binding.currentRssiText.text = getString(R.string.battery_rssi_format, rssiValue)
+    }
+
+    private fun updateGlitchesUI(glitches: Int) {
+        binding.currentGlitchesText.text = getString(R.string.battery_glitches_format, glitches)
+        val colorRes = if (glitches > 0) android.R.color.holo_red_dark else android.R.color.black
+        binding.currentGlitchesText.setTextColor(ContextCompat.getColor(requireContext(), colorRes))
     }
 
     private fun startLogging() {
@@ -172,7 +189,8 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         val intent = Intent(requireContext(), BatteryLoggingService::class.java)
         ContextCompat.startForegroundService(requireContext(), intent)
         
-        service?.startLogging(device, intervalSec)
+        service?.startLogging(device, intervalSec, binding.swEnableAudioMonitor.isChecked, 
+            binding.cbSilentMode.isChecked, binding.bufferStrategySpinner.selectedItemPosition)
         updateLoggingUI(true)
     }
 
@@ -185,30 +203,30 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         binding.btnStartBatteryLog.visibility = if (active) View.GONE else View.VISIBLE
         binding.btnStopBatteryLog.visibility = if (active) View.VISIBLE else View.GONE
         binding.batteryIntervalInput.isEnabled = !active
+        binding.swEnableAudioMonitor.isEnabled = !active
+        binding.cbSilentMode.isEnabled = !active
+        binding.bufferStrategySpinner.isEnabled = !active
     }
 
     private fun autoScrollLog() {
-        val scrollAmount = binding.batteryHistoryText.layout?.let {
-            it.lineCount * binding.batteryHistoryText.lineHeight - binding.batteryHistoryText.height
-        } ?: 0
-        if (scrollAmount > 0) {
-            binding.batteryHistoryText.scrollTo(0, scrollAmount)
+        binding.batteryHistoryText.post {
+            val layout = binding.batteryHistoryText.layout ?: return@post
+            val scrollAmount = layout.getLineBottom(binding.batteryHistoryText.lineCount - 1) -
+                    (binding.batteryHistoryText.height - binding.batteryHistoryText.paddingTop - binding.batteryHistoryText.paddingBottom)
+            if (scrollAmount > 0) binding.batteryHistoryText.scrollTo(0, scrollAmount)
         }
     }
 
-    override fun isTestRunning(): Boolean = false
-
-    override fun stopTest() {}
+    override fun isTestRunning(): Boolean = service?.isLoggingActive() ?: false
+    override fun stopTest() = stopLogging()
 
     override fun onDestroyView() {
         if (isBound) {
-            service?.setLogUpdateListener { }
+            service?.setLogUpdateListener(null)
             requireContext().unbindService(serviceConnection)
             isBound = false
         }
-        try {
-            requireContext().unregisterReceiver(bluetoothReceiver)
-        } catch (e: Exception) {}
+        try { requireContext().unregisterReceiver(bluetoothReceiver) } catch (e: Exception) {}
         super.onDestroyView()
         _binding = null
     }

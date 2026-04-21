@@ -19,8 +19,8 @@
             android:title="HFP / SCO Stress" />
         <item
             android:id="@+id/nav_battery_monitor"
-            android:icon="@android:drawable/ic_lock_idle_low_battery"
-            android:title="Battery Monitor" />
+            android:icon="@android:drawable/ic_menu_info_details"
+            android:title="Stability Monitor" />
         <item
             android:id="@+id/nav_acoustic_loopback"
             android:icon="@android:drawable/ic_btn_speak_now"
@@ -33,6 +33,10 @@
             android:id="@+id/nav_audio_latency"
             android:icon="@android:drawable/ic_menu_recent_history"
             android:title="@string/nav_audio_latency" />
+        <item
+            android:id="@+id/nav_clock_drift"
+            android:icon="@android:drawable/ic_menu_compass"
+            android:title="Audio Clock Drift" />
         <item
             android:id="@+id/nav_log_viewer"
             android:icon="@android:drawable/ic_menu_agenda"

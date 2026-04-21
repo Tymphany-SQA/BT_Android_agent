@@ -24,7 +24,8 @@ import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
-import android.view.KeyEvent
+import android.bluetooth.BluetoothCodecStatus
+import android.bluetooth.BluetoothCodecConfig
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -53,14 +54,10 @@ class DashboardFragment : Fragment() {
     private var isBleScanning = false
     private var a2dpSummary = ""
     private var headsetSummary = ""
+    private var codecSummary = ""
     private var selectedDeviceAddress: String? = null
-    private var detailsExpanded = true
     private var scanTimer: CountDownTimer? = null
     private val SCAN_DURATION_MS = 12_800L
-
-    // Rapid Test States
-    private var isRapidTesting = false
-    private var rapidTestThread: Thread? = null
 
     private lateinit var discoveryAdapter: DeviceAdapter
     private lateinit var bondedAdapter: DeviceAdapter
@@ -132,11 +129,6 @@ class DashboardFragment : Fragment() {
         binding.unpairDeviceButton.setOnClickListener { unpairSelectedDevice() }
         binding.playTestAudioButton.setOnClickListener { playTestAudio() }
         binding.toggleDetailsButton.setOnClickListener { toggleDeviceDetails() }
-
-        // Rapid Stress Buttons
-        binding.btnStartRapidPlayPause.setOnClickListener { startRapidMediaTest(isPlayPause = true) }
-        binding.btnStartRapidNextPrev.setOnClickListener { startRapidMediaTest(isPlayPause = false) }
-        binding.btnStopRapid.setOnClickListener { stopRapidMediaTest() }
 
         // Setup RecyclerViews
         discoveryAdapter = DeviceAdapter { device ->
@@ -373,7 +365,7 @@ class DashboardFragment : Fragment() {
     private fun toggleDeviceDetails() {
         val visible = binding.rawDeviceInfoText.visibility == View.VISIBLE
         binding.rawDeviceInfoText.visibility = if (visible) View.GONE else View.VISIBLE
-        binding.rawDeviceInfoText.text = "A2DP Raw: $a2dpSummary\nHFP Raw: $headsetSummary"
+        binding.rawDeviceInfoText.text = "Codec: $codecSummary\nA2DP Raw: $a2dpSummary\nHFP Raw: $headsetSummary"
     }
 
     private fun requestDeviceConnection(connect: Boolean) {
@@ -510,83 +502,6 @@ class DashboardFragment : Fragment() {
         }
     }
 
-    // --- Rapid Media Stress Implementation ---
-
-    private fun startRapidMediaTest(isPlayPause: Boolean) {
-        val loopInput = binding.rapidLoopCountInput.text.toString().toIntOrNull() ?: 100
-        val isNonStop = binding.cbNonStop.isChecked
-        val actualLoops = if (isNonStop) Int.MAX_VALUE else loopInput.coerceIn(1, 9999)
-
-        isRapidTesting = true
-        
-        binding.btnStartRapidPlayPause.isEnabled = false
-        binding.btnStartRapidNextPrev.isEnabled = false
-        binding.btnStopRapid.visibility = View.VISIBLE
-        binding.rapidProgressBar.visibility = View.VISIBLE
-        binding.rapidProgressBar.isIndeterminate = isNonStop
-        if (!isNonStop) {
-            binding.rapidProgressBar.max = actualLoops
-            binding.rapidProgressBar.progress = 0
-        }
-
-        val limitStrLog = if(isNonStop) "Non-stop" else "$actualLoops loops"
-        val startMsg = "Starting Rapid Media Test: $limitStrLog"
-        LogPersistenceManager.persistLog(requireContext().applicationContext, "RapidStress", startMsg)
-        Toast.makeText(context, startMsg, Toast.LENGTH_SHORT).show()
-
-        rapidTestThread = Thread {
-            try {
-                for (i in 1..actualLoops) {
-                    if (!isRapidTesting) break
-                    
-                    mainHandler.post {
-                        if (!isNonStop && _binding != null) {
-                            binding.rapidProgressBar.progress = i
-                        }
-                    }
-
-                    if (isPlayPause) {
-                        sendMediaButtonEvent(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
-                    } else {
-                        sendMediaButtonEvent(KeyEvent.KEYCODE_MEDIA_NEXT)
-                        Thread.sleep(300)
-                        sendMediaButtonEvent(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
-                    }
-
-                    Thread.sleep(600) // 避免指令堆疊過快
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BTAgent", "Rapid Test Error: ${e.message}")
-            } finally {
-                mainHandler.post { stopRapidMediaTest() }
-            }
-        }
-        rapidTestThread?.start()
-    }
-
-    private fun stopRapidMediaTest() {
-        isRapidTesting = false
-        rapidTestThread?.interrupt()
-        rapidTestThread = null
-        
-        if (_binding != null) {
-            binding.btnStartRapidPlayPause.isEnabled = true
-            binding.btnStartRapidNextPrev.isEnabled = true
-            binding.btnStopRapid.visibility = View.GONE
-            binding.rapidProgressBar.visibility = View.GONE
-        }
-        Toast.makeText(context, "Rapid Test Stopped", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun sendMediaButtonEvent(keyCode: Int) {
-        val audioManager = context?.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
-        val eventDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
-        val eventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
-        
-        audioManager.dispatchMediaKeyEvent(eventDown)
-        audioManager.dispatchMediaKeyEvent(eventUp)
-    }
-
     private var activeTestAudioTrack: AudioTrack? = null
     private var activeTestAudioThread: Thread? = null
 
@@ -657,7 +572,63 @@ class DashboardFragment : Fragment() {
                         }
                     }
 
-                    if (id == BluetoothProfile.A2DP) a2dpSummary = summary else headsetSummary = summary
+                    if (id == BluetoothProfile.A2DP) {
+                        a2dpSummary = summary
+                        // Attempt to get Codec Info (Safe Reflection for API 31+)
+                        if (proxy is BluetoothA2dp) {
+                            try {
+                                val codecStatus = try {
+                                    // Try hidden method (API 31/32)
+                                    val getCodecStatus = proxy.javaClass.getMethod("getCodecStatus", BluetoothDevice::class.java)
+                                    val activeDevice = proxy.javaClass.getMethod("getActiveDevice").invoke(proxy) as? BluetoothDevice
+                                    if (activeDevice != null) getCodecStatus.invoke(proxy, activeDevice) else null
+                                } catch (e: Exception) {
+                                    // Fallback to searching for ANY device codec status
+                                    val getCodecStatus = proxy.javaClass.methods.find { it.name == "getCodecStatus" }
+                                    val devices = proxy.connectedDevices
+                                    if (getCodecStatus != null && devices.isNotEmpty()) {
+                                        getCodecStatus.invoke(proxy, devices[0])
+                                    } else null
+                                }
+                                
+                                codecSummary = codecStatus?.let { status ->
+                                    val config = try {
+                                        status.javaClass.getMethod("getCodecConfig").invoke(status)
+                                    } catch (e: Exception) { null }
+                                    
+                                    config?.let { cfg ->
+                                        val cType = try { cfg.javaClass.getMethod("getCodecType").invoke(cfg) as Int } catch (e: Exception) { -1 }
+                                        val sRate = try { cfg.javaClass.getMethod("getSampleRate").invoke(cfg) as Int } catch (e: Exception) { -1 }
+
+                                        val type = when(cType) {
+                                            0 -> "SBC"
+                                            1 -> "AAC"
+                                            2 -> "aptX"
+                                            3 -> "aptX HD"
+                                            4 -> "LDAC"
+                                            5 -> "LC3"
+                                            6 -> "OPUS"
+                                            else -> "Unknown($cType)"
+                                        }
+                                        val rate = when(sRate) {
+                                            0x1 -> "44.1kHz"
+                                            0x2 -> "48kHz"
+                                            0x4 -> "88.2kHz"
+                                            0x8 -> "96kHz"
+                                            0x10 -> "176.4kHz"
+                                            0x20 -> "192kHz"
+                                            else -> "Default($sRate)"
+                                        }
+                                        "$type @ $rate"
+                                    }
+                                } ?: "Unknown / Not Active"
+                            } catch (e: Exception) {
+                                codecSummary = "N/A (Reflection Error)"
+                            }
+                        }
+                    } else {
+                        headsetSummary = summary
+                    }
                     
                     mainHandler.post { if (isAdded) renderDeviceDetails() }
                     adapter.closeProfileProxy(id, proxy)

@@ -92,6 +92,85 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Stereo Channel Check Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Stereo Channel Check"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:layout_marginBottom="4dp"/>
+
+                <TextView
+                    android:id="@+id/tvStereoStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#FF0000"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp"
+                    android:visibility="gone"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Verify speaker channel mapping using voice."
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:layout_marginBottom="12dp"/>
+
+                <GridLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:columnCount="2"
+                    android:alignmentMode="alignMargins">
+
+                    <Button
+                        android:id="@+id/btnLeftOnly"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="4dp"
+                        android:text="Left Only" />
+
+                    <Button
+                        android:id="@+id/btnRightOnly"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="4dp"
+                        android:text="Right Only" />
+
+                    <Button
+                        android:id="@+id/btnAlternating"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="4dp"
+                        android:text="L-R Alternating" />
+
+                    <Button
+                        android:id="@+id/btnStopStereoTest"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="0dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="4dp"
+                        android:text="Stop Test"
+                        android:visibility="visible" />
+                </GridLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Automation Card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"

@@ -1,7 +1,10 @@
 package com.sam.btagent
 
 import android.content.Context
+import android.media.MediaScannerConnection
+import android.os.Bundle
 import android.os.Environment
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
@@ -42,8 +45,6 @@ object LogPersistenceManager {
             val fileName = "${prefix}_$dateStr.csv"
             val file = File(appLogDir, fileName)
 
-            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
-            
             // Clean message for CSV (remove newlines, escape quotes if needed)
             val cleanMessage = message.replace("\n", " ").replace("\r", " ")
             val csvLine = "\"$timeStamp\",\"$cleanMessage\"\n"
@@ -53,6 +54,34 @@ object LogPersistenceManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to persist log: ${e.message}")
+        }
+    }
+
+    /**
+     * Specialized for Stress Test KPI logging to create a structured CSV
+     */
+    fun persistStressKPI(context: Context, loopIndex: Int, action: String, success: Boolean, durationMs: Long, glitches: Int = 0) {
+        try {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appLogDir = File(downloadDir, DIR_NAME)
+            if (!appLogDir.exists()) appLogDir.mkdirs()
+
+            val dateStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+            val fileName = "StressKPI_$dateStr.csv"
+            val file = File(appLogDir, fileName)
+
+            val isNewFile = !file.exists()
+            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+            
+            FileOutputStream(file, true).use { fos ->
+                if (isNewFile) {
+                    fos.write("Timestamp,LoopIndex,Action,Result,DurationMs,Glitches\n".toByteArray())
+                }
+                val line = "$timeStamp,$loopIndex,$action,${if (success) "SUCCESS" else "FAIL"},$durationMs,$glitches\n"
+                fos.write(line.toByteArray())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist stress KPI: ${e.message}")
         }
     }
 
@@ -132,5 +161,59 @@ object LogPersistenceManager {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save snapshot: ${e.message}")
         }
+    }
+
+    /**
+     * Specialized for Audio Clock Drift logging
+     */
+    fun persistDriftLog(context: Context, method: String, ppm: Double, actualRate: Double) {
+        try {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appLogDir = File(downloadDir, DIR_NAME)
+            if (!appLogDir.exists()) appLogDir.mkdirs()
+
+            val dateStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+            val fileName = "ClockDrift_$dateStr.csv"
+            val file = File(appLogDir, fileName)
+
+            val isNewFile = !file.exists() || file.length() == 0L
+            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+            
+            FileOutputStream(file, true).use { fos ->
+                if (isNewFile) {
+                    fos.write("Timestamp,Method,PPM,ActualRateHz\n".toByteArray())
+                }
+                val line = "$timeStamp,$method,${String.format(Locale.US, "%.2f", ppm)},${String.format(Locale.US, "%.2f", actualRate)}\n"
+                fos.write(line.toByteArray())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist drift log: ${e.message}")
+        }
+    }
+
+    /**
+     * 通知系統重新掃描資料夾，確保 Log Explorer 看到的是最新的檔案狀態
+     */
+    fun refreshLogFiles(context: Context) {
+        // ... (現有代碼保持不變)
+    }
+
+    fun getResourceDir(): File {
+        val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val resDir = File(downloadDir, "$DIR_NAME/Resources")
+        if (!resDir.exists()) resDir.mkdirs()
+        return resDir
+    }
+
+    fun generateTestWav(context: Context, tts: TextToSpeech, text: String, fileName: String, pan: Float) {
+        val file = File(getResourceDir(), fileName)
+        if (file.exists() && file.length() > 1000) return // 已存在且有效則跳過
+
+        val params = Bundle()
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, pan)
+        
+        // synthesizeToFile 將語音直接轉為 WAV 存檔
+        tts.synthesizeToFile(text, params, file, "GEN_$fileName")
+        Log.d(TAG, "Generating WAV: $fileName for text: $text")
     }
 }

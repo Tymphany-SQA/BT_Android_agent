@@ -96,9 +96,29 @@ class LogViewerFragment : Fragment() {
             holder.itemView.setOnClickListener {
                 showPreview(file)
             }
+            holder.itemView.setOnLongClickListener {
+                showDeleteDialog(file)
+                true
+            }
             holder.shareBtn.setOnClickListener {
                 shareFile(file)
             }
+        }
+
+        private fun showDeleteDialog(file: File) {
+            AlertDialog.Builder(requireContext())
+                .setTitle("Delete Log?")
+                .setMessage("Are you sure you want to delete ${file.name}?")
+                .setPositiveButton("Delete") { _, _ ->
+                    if (file.delete()) {
+                        Toast.makeText(context, "File deleted", Toast.LENGTH_SHORT).show()
+                        refreshLogList()
+                    } else {
+                        Toast.makeText(context, "Delete failed", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
         }
 
         private fun showPreview(file: File) {
@@ -107,13 +127,17 @@ class LogViewerFragment : Fragment() {
             val tvTitle = dialogView.findViewById<TextView>(R.id.tvPreviewTitle)
             val tvContent = dialogView.findViewById<TextView>(R.id.tvLogPreviewContent)
 
-            tvTitle.text = "Preview: ${file.name} (Top 50 lines)"
+            tvTitle.text = "Preview: ${file.name} (Latest 200 lines)"
             
             try {
-                val lines = file.bufferedReader().useLines { lines ->
-                    lines.take(50).toList()
+                // 改為讀取最後 200 行
+                val allLines = file.readLines()
+                val lastLines = if (allLines.size > 200) {
+                    allLines.takeLast(200)
+                } else {
+                    allLines
                 }
-                tvContent.text = if (lines.isEmpty()) "(Empty file)" else lines.joinToString("\n")
+                tvContent.text = if (lastLines.isEmpty()) "(Empty file)" else lastLines.joinToString("\n")
             } catch (e: Exception) {
                 tvContent.text = "Error reading file: ${e.message}"
             }

@@ -1,12 +1,16 @@
 package com.sam.btagent
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
@@ -38,6 +42,24 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
     private var isTesting = false
     private var testThread: Thread? = null
     private var activeAudioTrack: AudioTrack? = null
+    private var lastUnderrunCount = 0
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
+                    if (isTesting) {
+                        log("CRITICAL: Bluetooth was turned OFF. Aborting test.")
+                        stopStressTest()
+                        activity?.runOnUiThread {
+                            Toast.makeText(context, "Test aborted: Bluetooth OFF", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // KPI Tracking
     private val connectionTimes = mutableListOf<Long>()
@@ -94,6 +116,9 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         
         binding.copyLogButton.setOnClickListener { copyLogToClipboard() }
         binding.clearLogButton.setOnClickListener { clearLog() }
+
+        // Register Bluetooth observer
+        requireContext().registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
 
         resetKpiUI()
     }
@@ -160,6 +185,7 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         val pauseSec = binding.pauseDurationInput.text.toString().toIntOrNull() ?: 5
         val repeats = binding.repeatCountInput.text.toString().toIntOrNull() ?: 3
         val selectedAudio = AudioType.values()[binding.audioSelector.selectedItemPosition]
+        val address = targetDeviceAddress ?: ""
 
         isTesting = true
         connectionTimes.clear()
@@ -179,6 +205,17 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
             binding.testProgressBar.max = repeats
             binding.testProgressBar.progress = 0
             binding.loopProgressText.text = getString(R.string.loop_progress_label, 0, repeats)
+            
+            // Item 2: Keep screen on during test
+            binding.root.keepScreenOn = true
+        }
+
+        // Item 1: Start Foreground Service
+        val serviceIntent = Intent(requireContext(), StressTestService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            requireContext().startForegroundService(serviceIntent)
+        } else {
+            requireContext().startService(serviceIntent)
         }
 
         log("Starting stress test: $repeats loops")
@@ -213,7 +250,10 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
                     binding.audioSelector.isEnabled = true
                     binding.swStopOnError.isEnabled = true
                     binding.testStatusText.text = getString(R.string.test_status_label, getString(R.string.test_status_idle))
+                    binding.root.keepScreenOn = false
                 }
+                // Stop service when test ends
+                requireContext().stopService(serviceIntent)
             }
         }
         testThread?.start()
@@ -245,30 +285,41 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         
         // 5. Connect (With KPI Tracking)
         if (!isTesting) return
-        updateStatus("Action: Connect")
         val connectStartTime = System.currentTimeMillis()
         connectionAttempts++
         
-        var connected = false
+        var connectedResult: Boolean? = null
         performConnectionAction(connect = true) { success ->
-            if (success) {
-                val duration = System.currentTimeMillis() - connectStartTime
-                connectionTimes.add(duration)
-                connectionSuccesses++
-                activity?.runOnUiThread { updateKpiUI() }
-                log("Connection KPI: $duration ms")
-            } else {
-                log("Connection failed or timed out")
-                handleTestError("Connection Timeout/Fail")
-            }
-            connected = true
+            connectedResult = success
         }
         
         // Wait for connection to finish or timeout (max 15s)
         val waitStart = System.currentTimeMillis()
-        while (!connected && System.currentTimeMillis() - waitStart < 15000) {
+        while (connectedResult == null && System.currentTimeMillis() - waitStart < 16000) {
             if (!isTesting) break
+            val elapsed = (System.currentTimeMillis() - waitStart) / 1000
+            activity?.runOnUiThread {
+                binding.testStatusText.text = "Connecting... (${elapsed}s/15s)"
+            }
             Thread.sleep(200)
+        }
+
+        if (connectedResult == true) {
+            val duration = System.currentTimeMillis() - connectStartTime
+            connectionTimes.add(duration)
+            connectionSuccesses++
+            activity?.runOnUiThread { 
+                updateKpiUI()
+                updateStatus("Connected in ${duration}ms")
+            }
+            log("Connection KPI: $duration ms")
+            // Item 3: Persist structured KPI data
+            LogPersistenceManager.persistStressKPI(requireContext(), loopIndex, "CONNECT", true, duration)
+        } else {
+            val reason = if (connectedResult == false) "Profile Mismatch/Fail" else "Global Timeout"
+            log("Connection Error: $reason")
+            LogPersistenceManager.persistStressKPI(requireContext(), loopIndex, "CONNECT", false, 0)
+            handleTestError(reason)
         }
         
         interruptibleSleep(pauseSec)
@@ -336,48 +387,103 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun performConnectionAction(connect: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
         val address = targetDeviceAddress ?: return
         val context = context ?: return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            log("Error: Missing BLUETOOTH_CONNECT permission")
+            onComplete?.invoke(false)
+            return
+        }
+
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         val device = adapter.getRemoteDevice(address)
-        
-        // For KPI, we focus on A2DP as the primary audio indicator
-        val profileId = BluetoothProfile.A2DP
-        
-        adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
-            override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
-                try {
-                    val methodName = if (connect) "connect" else "disconnect"
-                    val method = proxy.javaClass.getMethod(methodName, BluetoothDevice::class.java)
-                    method.isAccessible = true
-                    val result = method.invoke(proxy, device) as? Boolean ?: false
-                    
-                    if (connect && result) {
-                        // Polling for connection state
-                        Thread {
-                            var success = false
-                            val pollStart = System.currentTimeMillis()
-                            while (System.currentTimeMillis() - pollStart < 12000) { // 12s timeout
-                                if (proxy.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED) {
-                                    success = true
-                                    break
+
+        // 1. 偵測裝置支援哪些 Profile
+        val supportedProfiles = mutableListOf(BluetoothProfile.A2DP)
+        try {
+            val uuids = device.uuids
+            val hasHfp = uuids?.any { it.uuid.toString().uppercase().contains("111E") || it.uuid.toString().uppercase().contains("111F") } ?: true
+            if (hasHfp) {
+                supportedProfiles.add(BluetoothProfile.HEADSET)
+            }
+        } catch (e: SecurityException) {
+            log("SecurityException reading UUIDs: ${e.message}")
+        }
+
+        log("Target profiles: ${supportedProfiles.map { if(it == BluetoothProfile.A2DP) "A2DP" else "HFP" }}")
+
+        val connectionResults = mutableMapOf<Int, Boolean>()
+        var profilesProcessed = 0
+
+        supportedProfiles.forEach { profileId ->
+            adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
+                override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
+                    try {
+                        val methodName = if (connect) "connect" else "disconnect"
+                        val method = proxy.javaClass.getMethod(methodName, BluetoothDevice::class.java)
+                        method.isAccessible = true
+                        val callSuccess = method.invoke(proxy, device) as? Boolean ?: false
+                        
+                        if (connect) {
+                            // 2. 進入輪詢檢查連線狀態
+                            Thread {
+                                var success = false
+                                val pollStart = System.currentTimeMillis()
+                                while (System.currentTimeMillis() - pollStart < 15000 && isTesting) {
+                                    val state = proxy.getConnectionState(device)
+                                    if (state == BluetoothProfile.STATE_CONNECTED) {
+                                        success = true
+                                        break
+                                    }
+                                    Thread.sleep(200)
                                 }
-                                Thread.sleep(100)
+                                
+                                val lastState = proxy.getConnectionState(device)
+                                if (!success) {
+                                    log("${profileName(id)} failed to connect. Final state: ${stateName(lastState)}")
+                                }
+
+                                synchronized(connectionResults) {
+                                    connectionResults[id] = success
+                                    profilesProcessed++
+                                    if (profilesProcessed == supportedProfiles.size) {
+                                        val overallSuccess = supportedProfiles.all { connectionResults[it] == true }
+                                        onComplete?.invoke(overallSuccess)
+                                    }
+                                }
+                                adapter.closeProfileProxy(id, proxy)
+                            }.start()
+                        } else {
+                            // 斷開連線邏輯
+                            log("${profileName(id)} Disconnect call: $callSuccess")
+                            synchronized(connectionResults) {
+                                profilesProcessed++
+                                if (profilesProcessed == supportedProfiles.size) {
+                                    onComplete?.invoke(true)
+                                }
                             }
-                            onComplete?.invoke(success)
                             adapter.closeProfileProxy(id, proxy)
-                        }.start()
-                    } else {
-                        log("${profileName(id)} ${if (connect) "Connect" else "Disconnect"} call: $result")
-                        onComplete?.invoke(result && !connect) // Disconnect always "succeeds" if call returns true
+                        }
+                    } catch (e: Exception) {
+                        log("${profileName(id)} action failed: ${e.message}")
+                        synchronized(connectionResults) {
+                            profilesProcessed++
+                            if (profilesProcessed == supportedProfiles.size) {
+                                onComplete?.invoke(false)
+                            }
+                        }
                         adapter.closeProfileProxy(id, proxy)
                     }
-                } catch (e: Exception) {
-                    log("${profileName(id)} action failed: ${e.message}")
-                    onComplete?.invoke(false)
-                    adapter.closeProfileProxy(id, proxy)
                 }
-            }
-            override fun onServiceDisconnected(id: Int) {}
-        }, profileId)
+                override fun onServiceDisconnected(id: Int) {}
+            }, profileId)
+        }
+    }
+
+    private fun stateName(state: Int) = when(state) {
+        BluetoothProfile.STATE_CONNECTED -> "CONNECTED"
+        BluetoothProfile.STATE_CONNECTING -> "CONNECTING"
+        BluetoothProfile.STATE_DISCONNECTED -> "DISCONNECTED"
+        BluetoothProfile.STATE_DISCONNECTING -> "DISCONNECTING"
+        else -> "UNKNOWN($state)"
     }
 
     private fun profileName(id: Int) = when(id) {
@@ -426,11 +532,12 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         log("=========================")
     }
 
-    private fun playGeneratedAudio(durationSec: Int, type: AudioType) {
+    private fun playGeneratedAudio(durationSec: Int, type: AudioType, loopIndex: Int = 0) {
         val sampleRate = 44100
         val numSamples = durationSec * sampleRate
         val buffer = ShortArray(numSamples)
 
+        // ... (保持原本的音訊生成邏輯)
         for (i in 0 until numSamples) {
             val t = i.toDouble() / sampleRate
             val sample = when(type) {
@@ -462,22 +569,36 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
 
         activeAudioTrack?.let {
             it.write(buffer, 0, numSamples)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                lastUnderrunCount = it.underrunCount
+            }
             it.play()
         }
         
         try {
             interruptibleSleep(durationSec)
+            
+            // Check for Glitches (Underruns) after playback
+            activeAudioTrack?.let {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                    val currentUnderruns = it.underrunCount
+                    val diff = currentUnderruns - lastUnderrunCount
+                    if (diff > 0) {
+                        log("AUDIO GLITCH DETECTED: $diff underruns during playback")
+                        LogPersistenceManager.persistStressKPI(requireContext(), loopIndex, "AUDIO_GLITCH", true, 0, diff)
+                    }
+                }
+            }
         } catch (e: InterruptedException) {
         } finally {
+            // ... (原本的 release 邏輯)
             activeAudioTrack?.let {
                 try {
                     if (it.state != AudioTrack.STATE_UNINITIALIZED) {
                         it.stop()
                         it.release()
                     }
-                } catch (e: Exception) {
-                    // Ignore already released or uninitialized
-                }
+                } catch (e: Exception) {}
                 activeAudioTrack = null
             }
         }
@@ -521,6 +642,9 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
     }
 
     override fun onDestroyView() {
+        try {
+            requireContext().unregisterReceiver(bluetoothStateReceiver)
+        } catch (e: Exception) {}
         stopStressTest()
         super.onDestroyView()
         _binding = null

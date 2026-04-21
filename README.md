@@ -12,10 +12,11 @@ BT Android Agent 2 is an Android 12+ Bluetooth validation tool for speaker testi
 The current app is organized around a side navigation drawer with several test pages:
 - **Dashboard**: Device discovery, pairing, and status overview.
 - **Stress Test**: Automated A2DP connect/disconnect/play loops with connection KPI (latency, success rate) tracking and **CSV log persistence**.
-- **Media**: AVRCP media-key and volume cycle automation.
+- **Media Control**: AVRCP media-key automation, rapid stress loops, volume cycling, and stereo channel check playback.
 - **HFP / SCO Stress**: Manual and automated A2DP to HFP (call mode) switching.
-- **Battery**: Background-capable battery and signal strength (RSSI) monitor with **structured CSV export**.
+- **Stability Monitor**: Background-capable battery, RSSI, route, and glitch monitoring with **structured CSV export**.
 - **Acoustic**: Real-time 1kHz loopback test for audio continuity and frequency validation.
+- **Audio Clock Drift**: Acoustic clock offset analysis using a 1kHz reference signal, with SNR-based environment quality monitoring.
 - **Volume Linearity**: Automatic 16-step (0-15) volume gain consistency check.
 - **Audio Latency**: End-to-end latency measurement using frequency switching (1kHz to 2kHz).
 - **Log Explorer**: View and share persistent test logs directly within the app, with **quick preview** support for CSV content.
@@ -31,6 +32,7 @@ It uses a single-activity, fragment-based structure:
 - `AcousticLoopbackFragment` (Tone Generator + Real-time Goertzel Analysis)
 - `VolumeLinearityFragment` (Automated Volume Step Analysis)
 - `AudioLatencyFragment` (Frequency-switching Latency Measurement)
+- `AudioClockDriftFragment` (Acoustic Clock Drift Monitor)
 - `LogViewerFragment` (Log Explorer)
 - `AboutFragment` (Project Information)
 
@@ -114,8 +116,8 @@ Behavior:
 - Copies logs to clipboard.
 - Clears logs in-app.
 
-### 3. Media
-The Media page focuses on AVRCP/media-key and volume automation checks.
+### 3. Media Control
+The Media Control page focuses on AVRCP/media-key checks, stereo playback validation, and long-running rapid stress automation.
 
 UI sections:
 - page status header
@@ -128,6 +130,11 @@ UI sections:
   - `Stop`
   - `Vol -`
   - `Vol +`
+- **Stereo Channel Check** card
+  - `Left Only`
+  - `Right Only`
+  - `L-R Alternating`
+  - `Stop Test`
 - **Automation Stress Settings** card
   - **Volume Cycle** controls
     - interval
@@ -135,6 +142,7 @@ UI sections:
     - max %
     - `Start Volume Cycle`
   - **Rapid Commands** controls
+    - loop count with `Non-stop`
     - base interval
     - random range
     - checkboxes for Play/Pause, Next, Prev, Stop
@@ -145,9 +153,10 @@ UI sections:
 Behavior:
 - Sends standard media key events.
 - Adjusts system media volume directly.
-- Can rapidly repeat selected AVRCP-style commands.
-- Can cycle volume between defined limits.
-- Requires a compatible background media player session for media-key effects to be observable.
+- Supports a file-based stereo channel check with pre-generated voice resources.
+- Executes high-frequency AVRCP commands with randomized timing for rapid stress testing.
+- Shows real-time progress for long-running automation tasks.
+- Requires a compatible background media player session (for example, Spotify).
 
 ### 4. HFP Stress
 The HFP Stress page focuses on SCO / call-path switching.
@@ -173,25 +182,31 @@ Behavior:
 Entry point:
 - This page is accessed via the side navigation drawer.
 
-### 5. Battery
-The Battery page focuses on long-term battery polling and signal stability logging.
+### 5. Stability Monitor
+The Stability Monitor page focuses on long-term battery polling, RSSI tracking, route visibility, and phone-side audio glitch monitoring.
 
 UI sections:
 - **Current status** card
   - current battery percentage
   - current RSSI (dBm) strength
+  - current glitch count
   - current target device
 - **Logger settings** card
   - logging interval input
-  - `Start Logging` (Starts a Foreground Service)
-  - `Stop Logging`
-- **History Log** card
-  - battery and RSSI log output with timestamps
+  - `Enable Audio Quality Monitor`
+  - `Silent Mode (for Spotify/Music)`
+  - buffer strategy selector
+  - `Start Monitoring` (Starts a Foreground Service)
+  - `Stop Monitoring`
+- **Stability Log** card
+  - battery, RSSI, route, and glitch log output with timestamps
   - `Clear`
 
 Behavior:
-- **Automatic CSV Logging**: All battery and RSSI data is automatically saved to `Downloads/BT_Android_Agent_Logs/BatteryLog_YYYYMMDD.csv`.
+- **Automatic CSV Logging**: All battery and RSSI data is automatically saved to `Downloads/BT_Android_Agent_Logs/StabilityLog_YYYYMMDD.csv`.
+- **Glitches Detection**: Monitors internal Android AudioTrack underruns (Phone Buffer) to identify if the phone's CPU or system is causing audio drops.
 - **Foreground Service**: Uses `BatteryLoggingService` to continue polling even when the app is in the background or the screen is off.
+- **Audio Route Tracking**: Captures whether playback is currently on BT A2DP, BT SCO, or the internal speaker.
 - **RSSI Tracking**: Tries GATT RSSI first and falls back to short discovery scans when needed.
 - **Event Monitoring**: Logs ACL connection/disconnection events in real-time.
 - **Battery Fallback Paths**: Tries the platform battery API first, then falls back to BLE GATT Battery Service reads when the device exposes them.
@@ -259,7 +274,34 @@ Behavior:
 3. After 5 rounds, it calculates and displays the **average latency**.
 4. This multi-round approach helps filter out transient system jitters and provides a more reliable assessment of the Bluetooth audio path.
 
-### 9. Log Explorer
+### 9. Audio Clock Drift
+The Audio Clock Drift page measures acoustic clock offset between the phone and the Bluetooth device using a 1kHz loopback reference.
+
+UI sections:
+- **Main Display**
+  - current ppm value
+  - detected frequency / acoustic method label
+  - accumulated offset and duration summary
+  - recent trend history
+- **Analysis Window** controls
+  - `0.1s`
+  - `0.5s`
+  - `1.0s`
+  - `2.0s`
+- **Test Controls**
+  - `Start Monitor`
+  - `Stop`
+- **Event Log**
+  - timestamped drift-monitor log output
+
+Behavior:
+- Plays a precise 1kHz reference tone and records it via the microphone.
+- Uses a Hanning-windowed frequency search around 1kHz to estimate drift in PPM.
+- Tracks accumulated offset in milliseconds over the full run.
+- Warns the user when SNR falls below 10 dB.
+- Useful for validating long-term playback drift or TWS sync stability.
+
+### 10. Log Explorer
 The Log Explorer provides a central location to manage the structured test logs.
 
 UI sections:
@@ -301,10 +343,12 @@ app/
     BatteryMonitorFragment.kt
     BatteryLoggingService.kt
     LogPersistenceManager.kt
+    StressTestService.kt
     DeviceAdapter.kt
     AcousticLoopbackFragment.kt
     VolumeLinearityFragment.kt
     AudioLatencyFragment.kt
+    AudioClockDriftFragment.kt
     LogViewerFragment.kt
     AboutFragment.kt
   src/main/res/
@@ -317,6 +361,7 @@ app/
       fragment_acoustic_loopback.xml
       fragment_volume_linearity.xml
       fragment_audio_latency.xml
+      fragment_audio_clock_drift.xml
       fragment_log_viewer.xml
       fragment_about.xml
       dialog_log_preview.xml
@@ -325,6 +370,9 @@ app/
     values/
     menu/
       nav_drawer_menu.xml
+    raw/
+      left.wav
+      right.wav
     xml/
       file_paths.xml
 tools/
@@ -421,4 +469,4 @@ python3 tools/bt_summary_gui.py
 - Acoustic loopback detection depends on speaker volume, microphone gain, device acoustics, and environmental noise; threshold tuning may be needed across devices.
 
 ## Version
-- App version: `0.00.08`
+- App version: `0.00.09`

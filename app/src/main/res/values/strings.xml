@@ -86,4 +86,23 @@
     <string name="rapid_test_loop_label">Rapid Loop: %1$d / %2$s</string>
     <string name="rapid_test_start_log">Starting Rapid Media Test: %1$s</string>
     <string name="rapid_test_non_stop">Non-stop</string>
+    <string name="nav_battery_monitor">Stability Monitor</string>
+    <string name="drift_trend_format">Trend (last %1$d): %2$s</string>
+    <string name="drift_trend_idle">Trend: --</string>
+    <string name="battery_current_format">Current: %1$s</string>
+    <string name="battery_rssi_format">RSSI: %1$s dBm</string>
+    <string name="battery_glitches_format">Glitches: %1$d (Phone buffer)</string>
+    <string name="battery_device_format">Device: %1$s</string>
+    <string name="no_device_connected">No connected device found</string>
+    <string name="please_connect_device">Please connect a BT device first</string>
+    <string name="logging_started">Logging started</string>
+    <string name="logging_stopped">Logging stopped</string>
+    <string name="strategy_standard">1. Standard (High Sensitivity)</string>
+    <string name="strategy_stable">2. Music (More Stable)</string>
+    <string name="log_cleared_toast">Log Cleared</string>
+    <string name="permission_required">Permission Required</string>
+    <string name="buffer_01s">0.1s (High Sensitivity)</string>
+    <string name="buffer_05s">0.5s (Standard)</string>
+    <string name="buffer_10s">1.0s (Stable)</string>
+    <string name="buffer_20s">2.0s (Ultra-Stable)</string>
 </resources>
