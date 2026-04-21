@@ -303,8 +303,7 @@ class BatteryLoggingService : Service() {
     private fun addLog(message: String) {
         val time = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
         val rssi = lastKnownRssi
-        // 確保 addLog 時也能觸發最新 Glitch 檢查
-        if (enableAudioMonitor) totalGlitches += checkAudioGlitches()
+        // 移除 checkAudioGlitches() 避免重複加算，統一由定時任務更新
         
         val rssiStr = if (rssi != null) " | RSSI: ${rssi}dBm" else " | RSSI: --dBm"
         val glitchStr = " | Glitches: $totalGlitches (Phone buffer)"

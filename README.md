@@ -15,7 +15,7 @@ The current app is organized around a side navigation drawer with several test p
 - **Media Control**: AVRCP media-key automation, rapid stress loops, volume cycling, and stereo channel check playback.
 - **HFP / SCO Stress**: Manual and automated A2DP to HFP (call mode) switching.
 - **Stability Monitor**: Background-capable battery, RSSI, route, and glitch monitoring with **structured CSV export**.
-- **Acoustic**: Real-time 1kHz loopback test for audio continuity and frequency validation.
+- **Acoustic**: Stereo loopback diagnostics with Normal / SWAP / single-channel tone modes, microphone analysis, and automated channel checks.
 - **Audio Clock Drift**: Acoustic clock offset analysis using a 1kHz reference signal, with SNR-based environment quality monitoring.
 - **Volume Linearity**: Automatic 16-step (0-15) volume gain consistency check.
 - **Audio Latency**: End-to-end latency measurement using frequency switching (1kHz to 2kHz).
@@ -29,7 +29,7 @@ It uses a single-activity, fragment-based structure:
 - `MediaControlStressFragment`
 - `HfpStressFragment`
 - `BatteryMonitorFragment` (Communicates with `BatteryLoggingService`)
-- `AcousticLoopbackFragment` (Tone Generator + Real-time Goertzel Analysis)
+- `AcousticLoopbackFragment` (Stereo Tone Generator + Real-time Goertzel Analysis)
 - `VolumeLinearityFragment` (Automated Volume Step Analysis)
 - `AudioLatencyFragment` (Frequency-switching Latency Measurement)
 - `AudioClockDriftFragment` (Acoustic Clock Drift Monitor)
@@ -213,23 +213,34 @@ Behavior:
 - Keeps a timestamped on-screen history while the logger is active.
 
 ### 6. Acoustic
-The Acoustic page provides a simple speaker-to-microphone loopback check using a generated 1kHz tone and real-time microphone analysis.
+The Acoustic page provides a stereo speaker-to-microphone loopback check using generated left/right reference tones and real-time microphone analysis.
 
 UI sections:
-- **Tone Generator (1kHz)** card
-  - single toggle button that switches between `Start 1kHz Tone` and `Stop 1kHz Tone`
-- **Real-time Monitor** card
+- **Tone Generator Control** card
+  - mode selector:
+    - `Normal`
+    - `Swap`
+    - `L-Only`
+    - `R-Only`
+  - `Start Manual`
+  - `Auto Diag`
+- **Microphone Analysis** card
   - input level progress bar
-  - 1kHz detection status badge
-  - magnitude readout
+  - left-channel status and magnitude readout
+  - right-channel status and magnitude readout
 - **Event Log** card
   - timestamped detection log
 
 Behavior:
-- Generates a continuous 1kHz output tone with `AudioTrack`.
+- Generates stereo test tones with `AudioTrack`.
+- Uses 1kHz for the left-channel reference and 2kHz for the right-channel reference in Normal mode.
+- Supports **SWAP** mode, where the left/right reference frequencies are intentionally exchanged to validate swapped-channel behavior.
+- Supports `L-Only` and `R-Only` modes for single-channel isolation.
+- The automated diagnostic sequence runs left-only, right-only, normal, swapped-left-only, swapped-right-only, and full swap checks.
 - Samples microphone input with `AudioRecord`.
-- Uses a Goertzel-based detector to estimate 1kHz energy in real time.
-- Shows `DETECTED` / `NO TONE` state changes and records transitions in the event log.
+- Uses Goertzel-based detectors to estimate 1kHz and 2kHz energy in real time.
+- Shows `OK`, `SWAP OK`, or `LOST` state changes and records transitions in the event log.
+- Long-pressing the acoustic log toggles advanced metrics display, including cached A2DP codec information when available.
 - Stops playback and monitoring automatically when the page is closed.
 
 ### 7. Volume Linearity
@@ -311,7 +322,7 @@ UI sections:
 
 Behavior:
 - Scans `Downloads/BT_Android_Agent_Logs/` for CSV files.
-- **Quick Preview**: Tapping a log file opens a preview dialog showing the first 50 lines of data in a readable code-style view.
+- **Quick Preview**: Tapping a log file opens a preview dialog showing the latest 200 lines of data in a readable code-style view.
 - **Share**: Long-press or use the share icon to export logs via standard Android share sheets.
 - Automatically highlights error/crash snapshots with alert icons.
 
@@ -343,6 +354,7 @@ app/
     BatteryMonitorFragment.kt
     BatteryLoggingService.kt
     LogPersistenceManager.kt
+    BluetoothHelper.kt
     StressTestService.kt
     DeviceAdapter.kt
     AcousticLoopbackFragment.kt

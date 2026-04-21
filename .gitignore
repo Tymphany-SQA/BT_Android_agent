@@ -5,3 +5,5 @@ local.properties
 build/
 captures/
 app/build/
+docs/patent_application_drafts_en.md
+docs/patent_application_drafts_zh-TW.md

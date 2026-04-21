@@ -31,15 +31,71 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Tone Generator (L: 1kHz / R: 2kHz)"
+                android:text="Tone Generator Control"
                 android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
                 android:layout_marginBottom="8dp"/>
 
-            <Button
-                android:id="@+id/btnToggleTone"
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/toggleGroupMode"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Start Stereo Test Tone"/>
+                app:singleSelection="true"
+                app:checkedButton="@+id/btnModeNormal"
+                android:layout_marginBottom="12dp">
+                <Button
+                    android:id="@+id/btnModeNormal"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="Normal"
+                    android:textSize="12sp"/>
+                <Button
+                    android:id="@+id/btnModeSwap"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="Swap"
+                    android:textSize="12sp"/>
+                <Button
+                    android:id="@+id/btnModeLeft"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="L-Only"
+                    android:textSize="12sp"/>
+                <Button
+                    android:id="@+id/btnModeRight"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="R-Only"
+                    android:textSize="12sp"/>
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <Button
+                    android:id="@+id/btnToggleTone"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:text="Start Manual"/>
+                <Button
+                    android:id="@+id/btnAutoDiagnostic"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:text="Auto Diag"/>
+            </LinearLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -87,6 +143,7 @@
                 android:layout_marginBottom="8dp">
 
                 <TextView
+                    android:id="@+id/labelLeftChannel"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
@@ -122,6 +179,7 @@
                 android:layout_marginBottom="8dp">
 
                 <TextView
+                    android:id="@+id/labelRightChannel"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"

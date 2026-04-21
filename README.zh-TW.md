@@ -15,7 +15,7 @@ BT Android Agent 2 是一個面向 Android 12+ 裝置的藍牙驗證工具，主
 - **Media Control**：AVRCP 媒體鍵自動化、Rapid Stress、音量循環與左右聲道檢查。
 - **HFP / SCO Stress**：手動與自動 A2DP 至 HFP (通話模式) 切換測試。
 - **Stability Monitor**：支援背景執行的電量、RSSI、音訊路由與 glitch 記錄，並自動**匯出為結構化 CSV**。
-- **Acoustic**：即時 1kHz loopback 音訊回授與頻率檢查。
+- **Acoustic**：立體聲 loopback 診斷，支援 Normal / SWAP / 單聲道測試模式、麥克風分析與自動聲道檢查。
 - **Audio Clock Drift**：透過 1kHz 聲學 loopback 做時鐘漂移與 PPM 偏移分析，並提供 SNR 環境品質監看。
 - **Volume Linearity**：自動化音量線性度與 16 階步階分析。
 - **Audio Latency**：透過頻率切換 (1kHz 到 2kHz) 量測端到端音訊延遲。
@@ -29,7 +29,7 @@ BT Android Agent 2 是一個面向 Android 12+ 裝置的藍牙驗證工具，主
 - `MediaControlStressFragment`
 - `HfpStressFragment`
 - `BatteryMonitorFragment`
-- `AcousticLoopbackFragment`
+- `AcousticLoopbackFragment` (立體聲 Tone Generator + 即時 Goertzel 分析)
 - `VolumeLinearityFragment` (自動音量步階分析)
 - `AudioLatencyFragment` (頻率切換延遲量測)
 - `AudioClockDriftFragment` (Acoustic Clock Drift Monitor)
@@ -214,23 +214,34 @@ Stability Monitor 頁面用來做背景式電量、RSSI、音訊路由與 phone-
 - 適合做長時間放電 / 充電曲線與訊號穩定度追蹤
 
 ### 6. Acoustic
-Acoustic 頁面提供簡單的喇叭對麥克風 loopback 檢查，透過 1kHz 測試音與即時麥克風分析來判斷聲音是否有成功回授。
+Acoustic 頁面提供立體聲喇叭對麥克風 loopback 檢查，透過左右聲道參考音與即時麥克風分析來判斷聲道輸出是否正常。
 
 畫面區塊：
-- **Tone Generator (1kHz)** 卡片
-  - 單一切換按鈕，會在 `Start 1kHz Tone` 與 `Stop 1kHz Tone` 之間切換
-- **Real-time Monitor** 卡片
+- **Tone Generator Control** 卡片
+  - 模式選擇：
+    - `Normal`
+    - `Swap`
+    - `L-Only`
+    - `R-Only`
+  - `Start Manual`
+  - `Auto Diag`
+- **Microphone Analysis** 卡片
   - 輸入電平 progress bar
-  - 1kHz 偵測狀態 badge
-  - magnitude 顯示
+  - 左聲道狀態與 magnitude 顯示
+  - 右聲道狀態與 magnitude 顯示
 - **Event Log** 卡片
   - 含時間戳的偵測事件紀錄
 
 功能：
-- 透過 `AudioTrack` 連續輸出 1kHz 測試音。
+- 透過 `AudioTrack` 連續輸出立體聲測試音。
+- Normal 模式使用 1kHz 作為左聲道參考、2kHz 作為右聲道參考。
+- 支援 **SWAP** 模式，刻意對調左右參考頻率，用來驗證聲道互換情境。
+- 支援 `L-Only` 與 `R-Only` 單聲道隔離測試。
+- `Auto Diag` 會自動輪跑 left-only、right-only、normal、swapped-left-only、swapped-right-only 與 full swap 檢查。
 - 透過 `AudioRecord` 擷取麥克風訊號。
-- 使用 Goertzel 演算法即時估算 1kHz 成分強度。
-- 顯示 `DETECTED` / `NO TONE` 狀態切換，並把變化寫入 log。
+- 使用 Goertzel 演算法即時估算 1kHz 與 2kHz 成分強度。
+- 顯示 `OK`、`SWAP OK` 或 `LOST` 狀態切換，並把變化寫入 log。
+- 長按 acoustic log 可切換 advanced metrics 顯示，包含可取得時的 A2DP codec 快取資訊。
 - 離開頁面時會自動停止播放與監聽。
 
 ### 7. Volume Linearity
@@ -311,7 +322,7 @@ Log Explorer 提供 app 內集中管理結構化測試日誌的入口。
 
 功能：
 - 掃描 `Downloads/BT_Android_Agent_Logs/` 內的 CSV 檔案。
-- **Quick Preview**：點擊檔案後會跳出預覽視窗，以易讀的 code-style 方式顯示前 50 行內容。
+- **Quick Preview**：點擊檔案後會跳出預覽視窗，以易讀的 code-style 方式顯示最新 200 行內容。
 - **Share**：可透過分享按鈕把 log 檔送到 Android share sheet。
 - 針對錯誤快照或 crash log 會以警示 icon 強調顯示。
 
@@ -343,6 +354,7 @@ app/
     BatteryMonitorFragment.kt
     BatteryLoggingService.kt
     LogPersistenceManager.kt
+    BluetoothHelper.kt
     StressTestService.kt
     DeviceAdapter.kt
     AcousticLoopbackFragment.kt

@@ -130,12 +130,15 @@ class LogViewerFragment : Fragment() {
             tvTitle.text = "Preview: ${file.name} (Latest 200 lines)"
             
             try {
-                // 改為讀取最後 200 行
-                val allLines = file.readLines()
-                val lastLines = if (allLines.size > 200) {
-                    allLines.takeLast(200)
-                } else {
-                    allLines
+                // 優化：改用串流讀取，避免一次性將大檔案讀入記憶體 (P2 Review Fix)
+                val lastLines = mutableListOf<String>()
+                file.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        lastLines.add(line)
+                        if (lastLines.size > 200) {
+                            lastLines.removeAt(0)
+                        }
+                    }
                 }
                 tvContent.text = if (lastLines.isEmpty()) "(Empty file)" else lastLines.joinToString("\n")
             } catch (e: Exception) {

@@ -40,6 +40,11 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
             isBound = true
             
             if (s != null) {
+                if (startLoggingPending) {
+                    val intervalSec = binding.batteryIntervalInput.text.toString().toLongOrNull() ?: 60L
+                    targetDevice?.let { performStartLogging(it, intervalSec) }
+                }
+
                 if (s.isLoggingActive()) {
                     updateLoggingUI(true)
                     binding.batteryHistoryText.text = s.getFullLog()
@@ -181,22 +186,37 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         binding.currentGlitchesText.setTextColor(ContextCompat.getColor(requireContext(), colorRes))
     }
 
+    private var startLoggingPending = false
+
     private fun startLogging() {
         val device = targetDevice ?: return
         val intervalSec = binding.batteryIntervalInput.text.toString().toLongOrNull() ?: 60L
         if (intervalSec < 1) return
 
-        val intent = Intent(requireContext(), BatteryLoggingService::class.java)
-        ContextCompat.startForegroundService(requireContext(), intent)
+        if (service == null) {
+            // 如果 Service 尚未 bind 成功，先啟動 Service 並標記為 pending (P2 Review Fix)
+            val intent = Intent(requireContext(), BatteryLoggingService::class.java)
+            ContextCompat.startForegroundService(requireContext(), intent)
+            requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+            startLoggingPending = true
+            Toast.makeText(context, "Initializing service...", Toast.LENGTH_SHORT).show()
+            return
+        }
         
+        performStartLogging(device, intervalSec)
+    }
+
+    private fun performStartLogging(device: BluetoothDevice, intervalSec: Long) {
         service?.startLogging(device, intervalSec, binding.swEnableAudioMonitor.isChecked, 
             binding.cbSilentMode.isChecked, binding.bufferStrategySpinner.selectedItemPosition)
         updateLoggingUI(true)
+        startLoggingPending = false
     }
 
     private fun stopLogging() {
         service?.stopLogging()
         updateLoggingUI(false)
+        startLoggingPending = false
     }
 
     private fun updateLoggingUI(active: Boolean) {

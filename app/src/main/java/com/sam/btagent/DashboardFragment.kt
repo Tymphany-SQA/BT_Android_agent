@@ -24,8 +24,7 @@ import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
-import android.bluetooth.BluetoothCodecStatus
-import android.bluetooth.BluetoothCodecConfig
+// 移除編譯時可能衝突的隱藏 API 導入
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -123,7 +122,7 @@ class DashboardFragment : Fragment() {
 
         binding.scanButton.setOnClickListener { startScan(ScanMode.CLASSIC_AND_BLE) }
         binding.stopScanButton.setOnClickListener { stopScan() }
-        
+
         binding.connectDeviceButton.setOnClickListener { requestDeviceConnection(connect = true) }
         binding.disconnectDeviceButton.setOnClickListener { requestDeviceConnection(connect = false) }
         binding.unpairDeviceButton.setOnClickListener { unpairSelectedDevice() }
@@ -151,7 +150,8 @@ class DashboardFragment : Fragment() {
             0
         }
 
-        requireContext().registerReceiver(
+        ContextCompat.registerReceiver(
+            requireContext(),
             discoveryReceiver,
             IntentFilter().apply {
                 addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED)
@@ -206,14 +206,20 @@ class DashboardFragment : Fragment() {
             updateBondedDeviceList()
             return
         }
-        val bonded = adapter.bondedDevices.orEmpty().sortedBy { it.name ?: it.address }
+
+        val bonded = try {
+            adapter.bondedDevices.orEmpty().sortedBy { it.name ?: it.address }
+        } catch (e: SecurityException) {
+            emptyList()
+        }
+        
         bondedDevices.clear()
         bonded.forEach { device ->
             bondedDevices[device.address] = device
         }
 
         val currentSelected = selectedDeviceAddress
-        if (currentSelected == null || currentSelected !in bondedDevices) {
+        if (currentSelected == null || !bondedDevices.containsKey(currentSelected)) {
             selectedDeviceAddress = bonded.firstOrNull()?.address
         }
         updateBondedDeviceList()
@@ -301,7 +307,7 @@ class DashboardFragment : Fragment() {
         // Create a copy to avoid ConcurrentModificationException
         val classic = synchronized(classicFoundDevices) { classicFoundDevices.values.toList() }
         val ble = synchronized(bleFoundDevices) { bleFoundDevices.values.toList() }
-        
+
         return (classic + ble)
             .distinctBy { it.address }
             .sortedWith(compareByDescending<BluetoothDevice> { it.bondState == BluetoothDevice.BOND_BONDED }
@@ -350,9 +356,16 @@ class DashboardFragment : Fragment() {
             return
         }
         binding.deviceDetailsCard.visibility = View.VISIBLE
-        binding.detailDeviceName.text = device.name ?: "Unknown"
+
+        val deviceName = try {
+            if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) device.name else "Permission Denied"
+        } catch (e: SecurityException) {
+            "Unknown"
+        }
+
+        binding.detailDeviceName.text = deviceName ?: "Unknown"
         binding.detailDeviceAddress.text = device.address
-        
+
         val isA2dpConnected = a2dpSummary.contains(device.address)
         val isHfpConnected = headsetSummary.contains(device.address)
 
@@ -372,7 +385,7 @@ class DashboardFragment : Fragment() {
         val device = selectedDeviceAddress?.let { bondedDevices[it] } ?: return
         val adapter = bluetoothAdapter() ?: return
         val context = context ?: return
-        
+
         val action = if (connect) "Connect" else "Disconnect"
         android.util.Log.d("BTAgent", "User requested $action for ${device.address}")
         LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "Action: $action Device: ${device.address}")
@@ -399,7 +412,7 @@ class DashboardFragment : Fragment() {
                 }
 
                 performProfileActionSequentially(profileOrder, device, connect)
-                
+
                 if (connect) {
                     try {
                         val method = device.javaClass.getMethod("connect")
@@ -411,21 +424,21 @@ class DashboardFragment : Fragment() {
                 android.util.Log.e("BTAgent", "Connection thread error: ${e.message}")
             }
         }.start()
-        
+
         Toast.makeText(context, "Initiating $action...", Toast.LENGTH_SHORT).show()
     }
 
     private fun performProfileActionSequentially(profiles: List<Int>, device: BluetoothDevice, connect: Boolean) {
         val adapter = bluetoothAdapter() ?: return
         val context = context ?: return
-        
+
         // 關鍵：使用遠端地址重新獲取裝置物件，確保與系統狀態機同步
         val remoteDevice = adapter.getRemoteDevice(device.address)
 
         profiles.forEach { profileId ->
             var actionFinished = false
             val pName = if (profileId == BluetoothProfile.A2DP) "A2DP" else "HFP"
-            
+
             adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
                 override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
                     Thread {
@@ -444,13 +457,13 @@ class DashboardFragment : Fragment() {
                             // 2. Action (Connect/Disconnect)
                             val methodName = if (connect) "connect" else "disconnect"
                             // 強化查找：從所有 public/private 方法中找尋，不論層級
-                            val method = proxy.javaClass.methods.find { 
-                                it.name == methodName && it.parameterTypes.size == 1 && it.parameterTypes[0] == BluetoothDevice::class.java 
+                            val method = proxy.javaClass.methods.find {
+                                it.name == methodName && it.parameterTypes.size == 1 && it.parameterTypes[0] == BluetoothDevice::class.java
                             } ?: proxy.javaClass.getDeclaredMethod(methodName, BluetoothDevice::class.java)
-                            
+
                             method.isAccessible = true
                             val result = method.invoke(proxy, remoteDevice) as? Boolean ?: false
-                            
+
                             android.util.Log.d("BTAgent", "$pName $methodName invoked, result: $result")
                             LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "$pName $methodName call: $result")
 
@@ -466,7 +479,7 @@ class DashboardFragment : Fragment() {
                                 Thread.sleep(400)
                             }
                             LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "$pName $methodName status: ${if(reached) "Success" else "Timeout"}")
-                            
+
                         } catch (e: Exception) {
                             android.util.Log.e("BTAgent", "$pName execution failed: ${e.message}")
                             LogPersistenceManager.persistLog(context.applicationContext, "Dashboard", "$pName error: ${e.message}")
@@ -484,8 +497,8 @@ class DashboardFragment : Fragment() {
                 Thread.sleep(100)
             }
         }
-        
-        mainHandler.post { 
+
+        mainHandler.post {
             if (isAdded) {
                 updateBluetoothSummary()
                 val finalAction = if (connect) "Connect" else "Disconnect"
@@ -549,7 +562,7 @@ class DashboardFragment : Fragment() {
     private fun loadProfileDiagnostics() {
         val adapter = bluetoothAdapter() ?: return
         val context = context ?: return
-        
+
         listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET).forEach { profile ->
             adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
                 override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
@@ -567,8 +580,12 @@ class DashboardFragment : Fragment() {
                                     else -> "P:$pValue"
                                 }
                             } catch (e: Exception) { "N/A" }
-                            
-                            "• ${device.name ?: "Unknown"} [${device.address}] (Policy: $policy)"
+
+                            val deviceName = try {
+                                if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) device.name else "N/A"
+                            } catch (e: Exception) { "Unknown" }
+
+                            "• ${deviceName ?: "Unknown"} [${device.address}] (Policy: $policy)"
                         }
                     }
 
@@ -590,15 +607,22 @@ class DashboardFragment : Fragment() {
                                         getCodecStatus.invoke(proxy, devices[0])
                                     } else null
                                 }
-                                
+
                                 codecSummary = codecStatus?.let { status ->
                                     val config = try {
                                         status.javaClass.getMethod("getCodecConfig").invoke(status)
                                     } catch (e: Exception) { null }
-                                    
+
                                     config?.let { cfg ->
-                                        val cType = try { cfg.javaClass.getMethod("getCodecType").invoke(cfg) as Int } catch (e: Exception) { -1 }
-                                        val sRate = try { cfg.javaClass.getMethod("getSampleRate").invoke(cfg) as Int } catch (e: Exception) { -1 }
+                                        val cType = try {
+                                            val m = cfg.javaClass.methods.find { it.name == "getCodecType" }
+                                            m?.invoke(cfg) as? Int ?: -1
+                                        } catch (e: Exception) { -1 }
+
+                                        val sRate = try {
+                                            val m = cfg.javaClass.methods.find { it.name == "getSampleRate" }
+                                            m?.invoke(cfg) as? Int ?: -1
+                                        } catch (e: Exception) { -1 }
 
                                         val type = when(cType) {
                                             0 -> "SBC"
@@ -606,22 +630,19 @@ class DashboardFragment : Fragment() {
                                             2 -> "aptX"
                                             3 -> "aptX HD"
                                             4 -> "LDAC"
-                                            5 -> "LC3"
-                                            6 -> "OPUS"
-                                            else -> "Unknown($cType)"
+                                            11 -> "LC3"
+                                            else -> "Type($cType)"
                                         }
                                         val rate = when(sRate) {
-                                            0x1 -> "44.1kHz"
-                                            0x2 -> "48kHz"
-                                            0x4 -> "88.2kHz"
-                                            0x8 -> "96kHz"
-                                            0x10 -> "176.4kHz"
-                                            0x20 -> "192kHz"
-                                            else -> "Default($sRate)"
+                                            0x1 -> "44.1k"
+                                            0x2 -> "48k"
+                                            0x4 -> "88.2k"
+                                            0x8 -> "96k"
+                                            else -> "SR($sRate)"
                                         }
                                         "$type @ $rate"
                                     }
-                                } ?: "Unknown / Not Active"
+                                } ?: "Inactive"
                             } catch (e: Exception) {
                                 codecSummary = "N/A (Reflection Error)"
                             }
@@ -629,7 +650,7 @@ class DashboardFragment : Fragment() {
                     } else {
                         headsetSummary = summary
                     }
-                    
+
                     mainHandler.post { if (isAdded) renderDeviceDetails() }
                     adapter.closeProfileProxy(id, proxy)
                 }
