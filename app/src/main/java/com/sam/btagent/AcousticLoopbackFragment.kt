@@ -46,6 +46,33 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
     private var analysisThread: Thread? = null
     private var lastLeftDetected = false
     private var lastRightDetected = false
+    private val diagStats = EnumMap<TestMode, ModeStats>(TestMode::class.java)
+    private var activeAutoMode: TestMode? = null
+    private var activeAutoModeStartedAt = 0L
+    private var manualStats = ModeStats()
+    private var manualStatsMode = TestMode.NORMAL
+
+    private data class ModeClassification(val result: String, val stability: String)
+
+    private data class ModeStats(
+        var samples: Int = 0,
+        var leftDetectedSamples: Int = 0,
+        var rightDetectedSamples: Int = 0,
+        var lostTransitions: Int = 0,
+        var leftMagSum: Double = 0.0,
+        var rightMagSum: Double = 0.0,
+        var lastLeftDetected: Boolean? = null,
+        var lastRightDetected: Boolean? = null
+    ) {
+        fun leftUptime(): Double = if (samples == 0) 0.0 else leftDetectedSamples * 100.0 / samples
+        fun rightUptime(): Double = if (samples == 0) 0.0 else rightDetectedSamples * 100.0 / samples
+        fun leftAvgMagnitude(): Double = if (samples == 0) 0.0 else leftMagSum / samples
+        fun rightAvgMagnitude(): Double = if (samples == 0) 0.0 else rightMagSum / samples
+    }
+
+    companion object {
+        private const val AUTO_DIAG_WARMUP_MS = 500L
+    }
 
     private val profileReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -84,6 +111,10 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
                     R.id.btnModeRight -> TestMode.RIGHT_ONLY
                     else -> TestMode.NORMAL
                 }
+                if (isRunning) {
+                    if (manualStats.samples > 0) persistManualSummary()
+                    resetManualStats(currentMode)
+                }
             }
         }
 
@@ -94,6 +125,9 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun startAutoDiagnostic() {
         if (!checkRecordPermission()) return
         isAutoDiagnosticRunning = true
+        diagStats.clear()
+        activeAutoMode = null
+        binding.autoDiagSummaryText.text = "Auto Diag Summary: running..."
         binding.btnAutoDiagnostic.text = "Stop Auto"
         binding.btnToggleTone.isEnabled = false
         Thread {
@@ -109,10 +143,12 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
                 )
                 for ((mode, sec) in sequence) {
                     if (!isAutoDiagnosticRunning) break
-                    
+
                     // 立即更新模式，讓發聲執行緒 (startTone) 立刻改變頻率
                     currentMode = mode
-                    
+                    activeAutoMode = mode
+                    activeAutoModeStartedAt = System.currentTimeMillis()
+
                     activity?.runOnUiThread {
                         // 同步更新 UI 按鈕狀態
                         val btnId = when(mode) {
@@ -128,9 +164,10 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
                     Thread.sleep(sec * 1000L)
                 }
             } catch (e: Exception) {} finally {
-                activity?.runOnUiThread { 
+                activity?.runOnUiThread {
+                    finishAutoDiagnosticSummary()
                     currentMode = TestMode.NORMAL
-                    stopLoopback() 
+                    stopLoopback()
                 }
             }
         }.start()
@@ -139,6 +176,7 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun startLoopback() {
         if (!checkRecordPermission()) return
         isRunning = true
+        if (!isAutoDiagnosticRunning) resetManualStats(currentMode)
         binding.btnToggleTone.text = "Stop Test"
         addLog("Starting Stereo Test...")
         startTone()
@@ -146,6 +184,8 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
     }
 
     private fun stopLoopback() {
+        val wasRunning = isRunning
+        val wasAutoDiagnostic = isAutoDiagnosticRunning
         isRunning = false
         isAutoDiagnosticRunning = false
         activity?.runOnUiThread {
@@ -158,6 +198,8 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
             binding.statusLeft.text = "IDLE"; binding.statusLeft.setBackgroundColor(0xFFDDDDDD.toInt())
             binding.statusRight.text = "IDLE"; binding.statusRight.setBackgroundColor(0xFFDDDDDD.toInt())
         }
+        activeAutoMode = null
+        if (wasRunning && !wasAutoDiagnostic && manualStats.samples > 0) persistManualSummary()
         stopTone(); stopAnalysis()
     }
 
@@ -303,6 +345,8 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
         val thr = 35000.0
         val detL = leftMag > thr; val detR = rightMag > thr
+        recordAutoDiagSample(currentMode, detL, detR, leftMag, rightMag)
+        recordManualSample(currentMode, detL, detR, leftMag, rightMag)
         
         if (detL != lastLeftDetected) { 
             lastLeftDetected = detL
@@ -328,6 +372,132 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
             v.text = "LOST"
             v.setBackgroundColor(ContextCompat.getColor(ctx, android.R.color.holo_red_dark))
         }
+    }
+
+    private fun recordAutoDiagSample(mode: TestMode, detL: Boolean, detR: Boolean, leftMag: Double, rightMag: Double) {
+        if (!isAutoDiagnosticRunning || activeAutoMode != mode) return
+        if (System.currentTimeMillis() - activeAutoModeStartedAt < AUTO_DIAG_WARMUP_MS) return
+        val stats = diagStats.getOrPut(mode) { ModeStats() }
+        updateStats(stats, detL, detR, leftMag, rightMag)
+    }
+
+    private fun recordManualSample(mode: TestMode, detL: Boolean, detR: Boolean, leftMag: Double, rightMag: Double) {
+        if (isAutoDiagnosticRunning || !isRunning || manualStatsMode != mode) return
+        updateStats(manualStats, detL, detR, leftMag, rightMag)
+        binding.autoDiagSummaryText.text = manualSummaryText(mode, manualStats)
+    }
+
+    private fun updateStats(stats: ModeStats, detL: Boolean, detR: Boolean, leftMag: Double, rightMag: Double) {
+        if (stats.lastLeftDetected == true && !detL) stats.lostTransitions += 1
+        if (stats.lastRightDetected == true && !detR) stats.lostTransitions += 1
+        stats.samples += 1
+        if (detL) stats.leftDetectedSamples += 1
+        if (detR) stats.rightDetectedSamples += 1
+        stats.leftMagSum += leftMag
+        stats.rightMagSum += rightMag
+        stats.lastLeftDetected = detL
+        stats.lastRightDetected = detR
+    }
+
+    private fun resetManualStats(mode: TestMode) {
+        manualStatsMode = mode
+        manualStats = ModeStats()
+        binding.autoDiagSummaryText.text = "Manual Stats: ${mode.name} running..."
+        addLog("Manual Stats reset: ${mode.name}")
+    }
+
+    private fun manualSummaryText(mode: TestMode, stats: ModeStats): String {
+        return "Manual Stats: ${mode.name} L=${String.format(Locale.US, "%.0f", stats.leftUptime())}% R=${String.format(Locale.US, "%.0f", stats.rightUptime())}% lost=${stats.lostTransitions} avgL=${String.format(Locale.US, "%.0f", stats.leftAvgMagnitude())} avgR=${String.format(Locale.US, "%.0f", stats.rightAvgMagnitude())}"
+    }
+
+    private fun persistManualSummary() {
+        val classification = classifyMode(manualStatsMode, manualStats)
+        LogPersistenceManager.persistAcousticDiagResult(
+            requireContext(),
+            "MANUAL_${manualStatsMode.name}",
+            classification.result,
+            classification.stability,
+            manualStats.leftUptime(),
+            manualStats.rightUptime(),
+            manualStats.lostTransitions,
+            manualStats.leftAvgMagnitude(),
+            manualStats.rightAvgMagnitude()
+        )
+        LogPersistenceManager.persistTestSummary(
+            requireContext(),
+            "AcousticManual",
+            manualStatsMode.name,
+            classification.result,
+            "stability=${classification.stability}; L=${String.format(Locale.US, "%.0f", manualStats.leftUptime())}%; R=${String.format(Locale.US, "%.0f", manualStats.rightUptime())}%; lost=${manualStats.lostTransitions}"
+        )
+        addLog("${manualSummaryText(manualStatsMode, manualStats)} result=${classification.result} stability=${classification.stability}")
+        manualStats = ModeStats()
+    }
+
+    private fun finishAutoDiagnosticSummary() {
+        if (diagStats.isEmpty()) {
+            binding.autoDiagSummaryText.text = "Auto Diag Summary: no samples"
+            return
+        }
+        val orderedModes = listOf(
+            TestMode.LEFT_ONLY,
+            TestMode.RIGHT_ONLY,
+            TestMode.NORMAL,
+            TestMode.SWAP_LEFT_ONLY,
+            TestMode.SWAP_RIGHT_ONLY,
+            TestMode.SWAP
+        )
+        val summaryLines = orderedModes.mapNotNull { mode ->
+            val stats = diagStats[mode] ?: return@mapNotNull null
+            val classification = classifyMode(mode, stats)
+            LogPersistenceManager.persistAcousticDiagResult(
+                requireContext(),
+                mode.name,
+                classification.result,
+                classification.stability,
+                stats.leftUptime(),
+                stats.rightUptime(),
+                stats.lostTransitions,
+                stats.leftAvgMagnitude(),
+                stats.rightAvgMagnitude()
+            )
+            "${mode.name}: result=${classification.result} stability=${classification.stability} L=${String.format(Locale.US, "%.0f", stats.leftUptime())}% R=${String.format(Locale.US, "%.0f", stats.rightUptime())}% lost=${stats.lostTransitions}"
+        }
+        val overallPass = summaryLines.all { it.contains("result=PASS") }
+        val overallStability = if (summaryLines.any { it.contains("stability=UNSTABLE") }) "UNSTABLE" else "STABLE"
+        val summary = "Auto Diag Summary: result=${if (overallPass) "PASS" else "FAIL"} stability=$overallStability\n${summaryLines.joinToString("\n")}"
+        binding.autoDiagSummaryText.text = summary
+        LogPersistenceManager.persistTestSummary(
+            requireContext(),
+            "AcousticAutoDiag",
+            "Overall",
+            if (overallPass) "PASS" else "FAIL",
+            "stability=$overallStability; warmupDiscardMs=$AUTO_DIAG_WARMUP_MS; ${summaryLines.joinToString(" | ")}"
+        )
+        addLog(summary.replace("\n", " | "))
+    }
+
+    private fun classifyMode(mode: TestMode, stats: ModeStats): ModeClassification {
+        val left = stats.leftUptime()
+        val right = stats.rightUptime()
+        val minDual = minOf(left, right)
+        val passThreshold = 80.0
+        val quietThreshold = 20.0
+        val result = when (mode) {
+            TestMode.NORMAL, TestMode.SWAP -> if (minDual >= passThreshold) "PASS" else "FAIL"
+            TestMode.LEFT_ONLY, TestMode.SWAP_LEFT_ONLY -> when {
+                left >= passThreshold && right <= quietThreshold -> "PASS"
+                left >= passThreshold && right > quietThreshold -> "FAIL_CROSSTALK"
+                else -> "FAIL_LEFT_LOST"
+            }
+            TestMode.RIGHT_ONLY, TestMode.SWAP_RIGHT_ONLY -> when {
+                right >= passThreshold && left <= quietThreshold -> "PASS"
+                right >= passThreshold && left > quietThreshold -> "FAIL_CROSSTALK"
+                else -> "FAIL_RIGHT_LOST"
+            }
+        }
+        val stability = if (stats.lostTransitions > 0) "UNSTABLE" else "STABLE"
+        return ModeClassification(result, stability)
     }
 
     private fun addLog(m: String) {

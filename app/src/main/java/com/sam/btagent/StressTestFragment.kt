@@ -14,7 +14,9 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.AudioTrack
+import android.media.MediaRecorder
 import android.os.Bundle
 import android.text.method.ScrollingMovementMethod
 import android.view.LayoutInflater
@@ -29,7 +31,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
 
@@ -63,8 +67,10 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
 
     // KPI Tracking
     private val connectionTimes = mutableListOf<Long>()
+    private val recoveryTimes = mutableListOf<Long>()
     private var connectionAttempts = 0
     private var connectionSuccesses = 0
+    private var recoverySuccesses = 0
 
     private enum class AudioType(val label: String) {
         SOFT_PIANO("Soft Piano (Gentle)"),
@@ -189,8 +195,10 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
 
         isTesting = true
         connectionTimes.clear()
+        recoveryTimes.clear()
         connectionAttempts = 0
         connectionSuccesses = 0
+        recoverySuccesses = 0
         resetKpiUI()
 
         activity?.runOnUiThread {
@@ -308,13 +316,20 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
             val duration = System.currentTimeMillis() - connectStartTime
             connectionTimes.add(duration)
             connectionSuccesses++
+            val recoveryDuration = measureConnectionRecoveryTime(connectStartTime)
+            if (recoveryDuration != null) {
+                recoveryTimes.add(recoveryDuration)
+                recoverySuccesses++
+                log("Recovery KPI: A2DP + acoustic output in ${recoveryDuration} ms")
+            }
             activity?.runOnUiThread { 
                 updateKpiUI()
-                updateStatus("Connected in ${duration}ms")
+                val recoveryText = recoveryDuration?.let { ", recovery ${it}ms" } ?: ""
+                updateStatus("Connected in ${duration}ms$recoveryText")
             }
             log("Connection KPI: $duration ms")
             // Item 3: Persist structured KPI data
-            LogPersistenceManager.persistStressKPI(requireContext(), loopIndex, "CONNECT", true, duration)
+            LogPersistenceManager.persistStressKPI(requireContext(), loopIndex, "CONNECT", true, duration, recoveryMs = recoveryDuration)
         } else {
             val reason = if (connectedResult == false) "Profile Mismatch/Fail" else "Global Timeout"
             log("Connection Error: $reason")
@@ -498,6 +513,8 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
             binding.tvKpiSuccessRate.text = getString(R.string.kpi_success_rate_none)
             binding.tvKpiMinMax.text = getString(R.string.kpi_min_max_none)
             binding.tvKpiP90.text = getString(R.string.kpi_p90_none)
+            binding.tvKpiP95.text = "P95: - ms"
+            binding.tvKpiRecovery.text = "Recovery: - ms"
         }
     }
 
@@ -509,13 +526,16 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         val max = connectionTimes.maxOrNull() ?: 0
         
         val sorted = connectionTimes.sorted()
-        val p90Index = (sorted.size * 0.9).toInt().coerceAtMost(sorted.size - 1)
-        val p90 = sorted[p90Index]
+        val p90 = percentile(sorted, 0.90)
+        val p95 = percentile(sorted, 0.95)
+        val recoveryAvg = if (recoveryTimes.isNotEmpty()) recoveryTimes.average().toLong() else null
 
         binding.tvKpiAvg.text = getString(R.string.kpi_avg_format, avg)
         binding.tvKpiSuccessRate.text = getString(R.string.kpi_success_rate_format, connectionSuccesses, connectionAttempts)
         binding.tvKpiMinMax.text = getString(R.string.kpi_min_max_format, min.toInt(), max.toInt())
         binding.tvKpiP90.text = getString(R.string.kpi_p90_format, p90.toInt())
+        binding.tvKpiP95.text = "P95: ${p95} ms"
+        binding.tvKpiRecovery.text = "Recovery: ${recoveryAvg?.let { "$it ms" } ?: "- ms"}"
     }
 
     private fun logFinalKpi() {
@@ -527,9 +547,137 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         log("Min Time: ${connectionTimes.minOrNull()} ms")
         log("Max Time: ${connectionTimes.maxOrNull()} ms")
         val sorted = connectionTimes.sorted()
-        val p90 = sorted[(sorted.size * 0.9).toInt().coerceAtMost(sorted.size - 1)]
+        val p90 = percentile(sorted, 0.90)
+        val p95 = percentile(sorted, 0.95)
         log("P90 Time: $p90 ms")
+        log("P95 Time: $p95 ms")
+        val summaryDetail = StringBuilder()
+            .append("attempts=$connectionAttempts; successes=$connectionSuccesses; avg=${connectionTimes.average().toInt()}ms; min=${connectionTimes.minOrNull()}ms; max=${connectionTimes.maxOrNull()}ms; p90=${p90}ms; p95=${p95}ms")
+        if (recoveryTimes.isNotEmpty()) {
+            log("Recovery Success: $recoverySuccesses/$connectionSuccesses")
+            log("Average Recovery: ${recoveryTimes.average().toInt()} ms")
+            log("P95 Recovery: ${percentile(recoveryTimes.sorted(), 0.95)} ms")
+            summaryDetail.append("; recoverySuccess=$recoverySuccesses/$connectionSuccesses; recoveryAvg=${recoveryTimes.average().toInt()}ms; recoveryP95=${percentile(recoveryTimes.sorted(), 0.95)}ms")
+        }
+        LogPersistenceManager.persistTestSummary(
+            requireContext(),
+            "StressTest",
+            "ConnectionKPI",
+            "${connectionSuccesses}/${connectionAttempts}",
+            summaryDetail.toString()
+        )
         log("=========================")
+    }
+
+    private fun percentile(sortedValues: List<Long>, p: Double): Long {
+        if (sortedValues.isEmpty()) return 0
+        val index = kotlin.math.ceil(sortedValues.size * p).toInt().minus(1).coerceIn(0, sortedValues.size - 1)
+        return sortedValues[index]
+    }
+
+    private fun measureConnectionRecoveryTime(connectStartTime: Long): Long? {
+        val context = context ?: return null
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            log("Recovery KPI skipped: RECORD_AUDIO permission missing")
+            return null
+        }
+
+        val sampleRate = 44100
+        val probeDurationMs = 5000L
+        val recordBufferSize = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val playBufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (recordBufferSize <= 0 || playBufferSize <= 0) {
+            log("Recovery KPI skipped: audio probe unavailable")
+            return null
+        }
+
+        var probeTrack: AudioTrack? = null
+        var probeRecord: AudioRecord? = null
+        return try {
+            probeTrack = AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build())
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build())
+                .setBufferSizeInBytes(playBufferSize)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+
+            probeRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                recordBufferSize.coerceAtLeast(4096)
+            )
+
+            val playbackSamples = ShortArray(1024)
+            var phase = 0.0
+            val phaseIncrement = 2 * PI * 440.0 / sampleRate
+            var detectedAt: Long? = null
+            var writerRunning = true
+
+            probeTrack.play()
+            probeRecord.startRecording()
+
+            val writerThread = Thread {
+                while (writerRunning && isTesting) {
+                    for (i in playbackSamples.indices) {
+                        playbackSamples[i] = (sin(phase) * Short.MAX_VALUE * 0.35).toInt().toShort()
+                        phase += phaseIncrement
+                        if (phase > 2 * PI) phase -= 2 * PI
+                    }
+                    try {
+                        probeTrack.write(playbackSamples, 0, playbackSamples.size)
+                    } catch (e: Exception) {
+                        break
+                    }
+                }
+            }.apply { start() }
+
+            val readBuffer = ShortArray(2048)
+            val waitStart = System.currentTimeMillis()
+            while (isTesting && System.currentTimeMillis() - waitStart < probeDurationMs) {
+                val read = probeRecord.read(readBuffer, 0, readBuffer.size)
+                if (read > 0 && goertzel(readBuffer, read, 440.0, sampleRate) > 500_000.0) {
+                    detectedAt = System.currentTimeMillis()
+                    break
+                }
+            }
+
+            writerRunning = false
+            writerThread.join(500)
+            detectedAt?.minus(connectStartTime).also {
+                if (it == null) log("Recovery KPI: acoustic output not detected within ${probeDurationMs}ms probe window")
+            }
+        } catch (e: Exception) {
+            log("Recovery KPI error: ${e.message}")
+            null
+        } finally {
+            runCatching { probeRecord?.stop(); probeRecord?.release() }
+            runCatching { probeTrack?.stop(); probeTrack?.release() }
+        }
+    }
+
+    private fun goertzel(samples: ShortArray, read: Int, targetFreq: Double, sampleRate: Int): Double {
+        val n = read.coerceAtMost(samples.size)
+        if (n <= 1) return 0.0
+        val k = (0.5 + (n * targetFreq / sampleRate)).toInt()
+        val omega = 2.0 * PI * k / n
+        val coeff = 2.0 * cos(omega)
+        var q1 = 0.0
+        var q2 = 0.0
+        for (i in 0 until n) {
+            val q0 = coeff * q1 - q2 + samples[i]
+            q2 = q1
+            q1 = q0
+        }
+        return sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2)
     }
 
     private fun playGeneratedAudio(durationSec: Int, type: AudioType, loopIndex: Int = 0) {

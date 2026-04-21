@@ -146,7 +146,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:columnCount="2"
-                    android:rowCount="2">
+                    android:rowCount="3">
 
                     <TextView
                         android:id="@+id/tvKpiAvg"
@@ -173,12 +173,30 @@
                         android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                         android:layout_marginTop="4dp" />
 
-                    <TextView
-                        android:id="@+id/tvKpiP90"
+	                    <TextView
+	                        android:id="@+id/tvKpiP90"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_columnWeight="1"
                         android:text="P90: - ms"
+	                        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+	                        android:layout_marginTop="4dp" />
+
+                    <TextView
+                        android:id="@+id/tvKpiP95"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_columnWeight="1"
+                        android:text="P95: - ms"
+                        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                        android:layout_marginTop="4dp" />
+
+                    <TextView
+                        android:id="@+id/tvKpiRecovery"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_columnWeight="1"
+                        android:text="Recovery: - ms"
                         android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                         android:layout_marginTop="4dp" />
                 </GridLayout>

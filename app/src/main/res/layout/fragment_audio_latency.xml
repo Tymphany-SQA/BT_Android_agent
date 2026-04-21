@@ -41,6 +41,15 @@
                 android:textColor="@android:color/holo_blue_dark"
                 android:layout_gravity="center_horizontal"/>
 
+            <TextView
+                android:id="@+id/tvLatencyStats"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_gravity="center_horizontal"
+                android:text="Jitter: -- ms | P95: -- ms"
+                android:textSize="14sp" />
+
             <Button
                 android:id="@+id/btnStartTest"
                 android:layout_width="match_parent"

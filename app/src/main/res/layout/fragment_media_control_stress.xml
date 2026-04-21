@@ -89,6 +89,15 @@
                     <Button android:id="@+id/stopButton" style="@style/Widget.Material3.Button.TonalButton" android:layout_width="0dp" android:layout_columnWeight="1" android:text="Stop" android:layout_margin="2dp"/>
                     <Button android:id="@+id/volUpButton" style="@style/Widget.Material3.Button.TonalButton" android:layout_width="0dp" android:layout_columnWeight="1" android:text="Vol +" android:layout_margin="2dp"/>
                 </GridLayout>
+
+                <TextView
+                    android:id="@+id/tvCommandResponse"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Command Response: --"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="?android:attr/textColorSecondary"/>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

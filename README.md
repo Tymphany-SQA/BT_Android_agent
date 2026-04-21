@@ -13,7 +13,7 @@ The current app is organized around a side navigation drawer with several test p
 - **Dashboard**: Device discovery, pairing, and status overview.
 - **Stress Test**: Automated A2DP connect/disconnect/play loops with connection KPI (latency, success rate) tracking and **CSV log persistence**.
 - **Media Control**: AVRCP media-key automation, rapid stress loops, volume cycling, and stereo channel check playback.
-- **HFP / SCO Stress**: Manual and automated A2DP to HFP (call mode) switching.
+- **HFP / SCO Stress**: Manual and automated A2DP to HFP (call mode) switching with SCO transition latency tracking.
 - **Stability Monitor**: Background-capable battery, RSSI, route, acoustic continuity, and quality-score monitoring with **structured CSV export**.
 - **Acoustic**: Stereo loopback diagnostics with Normal / SWAP / single-channel tone modes, microphone analysis, and automated channel checks.
 - **Audio Clock Drift**: Acoustic clock offset analysis using a 1kHz reference signal, with SNR-based environment quality monitoring.
@@ -89,6 +89,8 @@ UI sections:
   - Success rate
   - Min / Max
   - P90
+  - P95
+  - Recovery time
 - progress section with:
   - current status
   - loop counter
@@ -110,7 +112,9 @@ Behavior:
 - **Connection KPI Tracking**:
   - Measures the time from `connect()` command to `STATE_CONNECTED`.
   - Calculates real-time statistics: **Average**, **Min/Max**, and **90th Percentile (P90)**.
+  - Adds **P95** to make long-tail reconnection instability easier to spot.
   - Tracks connection success rate.
+  - Measures recovery time from reconnect start to **A2DP connected plus acoustic output detected** using a short 440Hz probe when microphone permission is available.
   - Logs a final KPI summary at the end of the test.
 - Supports different generated audio types.
 - Copies logs to clipboard.
@@ -128,8 +132,9 @@ UI sections:
   - `Play/Pause`
   - `Next`
   - `Stop`
-  - `Vol -`
-  - `Vol +`
+	  - `Vol -`
+	  - `Vol +`
+  - command response readout
 - **Stereo Channel Check** card
   - `Left Only`
   - `Right Only`
@@ -152,6 +157,8 @@ UI sections:
 
 Behavior:
 - Sends standard media key events.
+- Tracks command response time for observable changes such as volume changes and music active-state changes.
+- `Next` / `Prev` are logged as dispatch timing because track metadata changes are not available without deeper player integration.
 - Adjusts system media volume directly.
 - Supports a file-based stereo channel check with pre-generated voice resources.
 - Executes high-frequency AVRCP commands with randomized timing for rapid stress testing.
@@ -173,10 +180,12 @@ UI sections:
   - `Start HFP Stress Loop`
   - `Stop Loop`
 - log card
+  - SCO transition latency entries
 
 Behavior:
 - Manually requests SCO on/off.
 - Repeatedly alternates between A2DP and HFP timing windows.
+- Measures profile transition latency from SCO request to the Android SCO connected/disconnected broadcast.
 - Helps validate whether audio routing returns correctly after simulated call-mode transitions.
 
 Entry point:
@@ -234,6 +243,8 @@ UI sections:
   - input level progress bar
   - left-channel status and magnitude readout
   - right-channel status and magnitude readout
+  - Manual Stats for the active mode, including L/R uptime, lost count, and average magnitude
+  - Auto Diag PASS/FAIL summary with per-mode uptime and lost-count results
 - **Event Log** card
   - timestamped detection log
 
@@ -242,7 +253,12 @@ Behavior:
 - Uses 1kHz for the left-channel reference and 2kHz for the right-channel reference in Normal mode.
 - Supports **SWAP** mode, where the left/right reference frequencies are intentionally exchanged to validate swapped-channel behavior.
 - Supports `L-Only` and `R-Only` modes for single-channel isolation.
+- Manual mode records live statistics for the current mode and writes a `MANUAL_*` summary when stopped or when the mode changes.
 - The automated diagnostic sequence runs left-only, right-only, normal, swapped-left-only, swapped-right-only, and full swap checks.
+- Auto Diag summarizes each mode as a separate `Result` and `Stability` pair, for example `Result=PASS, Stability=UNSTABLE`.
+- Auto Diag discards the first 500 ms of each mode as warm-up so transition frames do not reduce the score.
+- Auto Diag separates `Result` (`PASS` / `FAIL_*`) from `Stability` (`STABLE` / `UNSTABLE`) to avoid ambiguous `PASS_UNSTABLE` reporting.
+- Auto Diag writes structured results to `Downloads/BT_Android_Agent_Logs/AcousticDiag_YYYYMMDD.csv`.
 - Samples microphone input with `AudioRecord`.
 - Uses Goertzel-based detectors to estimate 1kHz and 2kHz energy in real time.
 - Shows `OK`, `SWAP OK`, or `LOST` state changes and records transitions in the event log.
@@ -278,6 +294,8 @@ UI sections:
   - `Stop`
 - **Result Display**
   - Average latency value after 5 rounds
+  - latency jitter (standard deviation)
+  - P95 latency
 - **Event Log**
   - Detailed round-by-round results and timestamps
 
@@ -289,7 +307,8 @@ Behavior:
     - Uses a Goertzel filter to detect the 2kHz arrival via the microphone.
     - Calculates the latency for that round.
 3. After 5 rounds, it calculates and displays the **average latency**.
-4. This multi-round approach helps filter out transient system jitters and provides a more reliable assessment of the Bluetooth audio path.
+4. It also reports **latency jitter** and **P95 latency** so unstable long-tail behavior is visible even when the average looks acceptable.
+5. This multi-round approach helps filter out transient system jitters and provides a more reliable assessment of the Bluetooth audio path.
 
 ### 9. Audio Clock Drift
 The Audio Clock Drift page measures acoustic clock offset between the phone and the Bluetooth device using a 1kHz loopback reference.
@@ -331,6 +350,18 @@ Behavior:
 - **Quick Preview**: Tapping a log file opens a preview dialog showing the latest 200 lines of data in a readable code-style view.
 - **Share**: Long-press or use the share icon to export logs via standard Android share sheets.
 - Automatically highlights error/crash snapshots with alert icons.
+
+### 11. Test Summary and Session ID
+The app assigns a session ID when it starts and writes high-level KPI summaries to `Downloads/BT_Android_Agent_Logs/TestSummary_YYYYMMDD.csv`.
+
+Summary sources include:
+- Stress Test connection KPI and recovery statistics.
+- Audio Latency average, jitter, and P95.
+- Acoustic Auto Diag / Manual result and stability.
+- HFP / SCO transition latency.
+- Media Control command response timing.
+
+The same session ID is also included in structured KPI CSV files where available, making it easier to correlate logs from the same validation run.
 
 ## Navigation Safety
 If a stress-related page is running a test, the app intercepts side-drawer navigation changes and asks whether the user wants to stop the running test before switching pages.
@@ -488,4 +519,4 @@ python3 tools/bt_summary_gui.py
 - Acoustic loopback detection depends on speaker volume, microphone gain, device acoustics, and environmental noise; threshold tuning may be needed across devices.
 
 ## Version
-- App version: `0.00.09`
+- App version: `0.00.10`

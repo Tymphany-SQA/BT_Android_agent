@@ -27,6 +27,9 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
     private var isAutoTesting = false
     private var testThread: Thread? = null
     private var focusRequest: AudioFocusRequest? = null
+    private var pendingScoTransitionStart: Long? = null
+    private var pendingScoTargetState: Int? = null
+    private val scoTransitionTimes = mutableListOf<Long>()
 
     private val scoReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -39,6 +42,26 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
                 else -> "UNKNOWN ($state)"
             }
             log("SCO State Changed: $stateStr")
+            val target = pendingScoTargetState
+            val start = pendingScoTransitionStart
+            if (state != null && target != null && start != null && state == target) {
+                val elapsed = System.currentTimeMillis() - start
+                scoTransitionTimes.add(elapsed)
+                pendingScoTransitionStart = null
+                pendingScoTargetState = null
+                val avg = scoTransitionTimes.average().toLong()
+                if (_binding != null) binding.hfpTransitionText.text = "Transition: ${elapsed}ms (avg ${avg}ms)"
+                log("Profile Transition KPI: SCO ${stateStr.lowercase(Locale.US)} in ${elapsed}ms")
+                context?.let {
+                    LogPersistenceManager.persistTestSummary(
+                        it.applicationContext,
+                        "HFP",
+                        "SCO_${stateStr}",
+                        "${elapsed}ms",
+                        "avg=${avg}ms; samples=${scoTransitionTimes.size}"
+                    )
+                }
+            }
         }
     }
 
@@ -72,6 +95,8 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun startSco() {
         log("Requesting SCO & Audio Focus...")
+        pendingScoTransitionStart = System.currentTimeMillis()
+        pendingScoTargetState = AudioManager.SCO_AUDIO_STATE_CONNECTED
         
         // Request Audio Focus to stop/duck music
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -101,6 +126,8 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
 
     private fun stopSco() {
         log("Stopping SCO & Releasing Focus...")
+        pendingScoTransitionStart = System.currentTimeMillis()
+        pendingScoTargetState = AudioManager.SCO_AUDIO_STATE_DISCONNECTED
         
         // Abandon focus to let music resume
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -121,6 +148,8 @@ class HfpStressFragment : Fragment(), MainActivity.TestStatusProvider {
         val hfpDur = binding.hfpDurationInput.text.toString().toLongOrNull() ?: 5000L
 
         isAutoTesting = true
+        scoTransitionTimes.clear()
+        binding.hfpTransitionText.text = "Transition: --"
         updateUiForTest(true)
         log("Starting HFP Stress Loop (A2DP: ${a2dpDur}ms, HFP: ${hfpDur}ms)")
 

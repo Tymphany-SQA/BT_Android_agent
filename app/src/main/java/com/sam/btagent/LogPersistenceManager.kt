@@ -16,8 +16,11 @@ object LogPersistenceManager {
     private const val TAG = "LogPersistenceManager"
     private const val DIR_NAME = "BT_Android_Agent_Logs"
     private const val BUFFER_SIZE = 1000
+    private val sessionId = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
 
     private val logBuffer = java.util.Collections.synchronizedList(mutableListOf<String>())
+
+    fun getSessionId(): String = sessionId
 
     /**
      * Appends a log entry to a file and also maintains a circular buffer in memory.
@@ -60,7 +63,15 @@ object LogPersistenceManager {
     /**
      * Specialized for Stress Test KPI logging to create a structured CSV
      */
-    fun persistStressKPI(context: Context, loopIndex: Int, action: String, success: Boolean, durationMs: Long, glitches: Int = 0) {
+    fun persistStressKPI(
+        context: Context,
+        loopIndex: Int,
+        action: String,
+        success: Boolean,
+        durationMs: Long,
+        glitches: Int = 0,
+        recoveryMs: Long? = null
+    ) {
         try {
             val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val appLogDir = File(downloadDir, DIR_NAME)
@@ -75,9 +86,9 @@ object LogPersistenceManager {
             
             FileOutputStream(file, true).use { fos ->
                 if (isNewFile) {
-                    fos.write("Timestamp,LoopIndex,Action,Result,DurationMs,Glitches\n".toByteArray())
+                    fos.write("Timestamp,SessionId,LoopIndex,Action,Result,DurationMs,Glitches,RecoveryMs\n".toByteArray())
                 }
-                val line = "$timeStamp,$loopIndex,$action,${if (success) "SUCCESS" else "FAIL"},$durationMs,$glitches\n"
+                val line = "$timeStamp,$sessionId,$loopIndex,$action,${if (success) "SUCCESS" else "FAIL"},$durationMs,$glitches,${recoveryMs ?: ""}\n"
                 fos.write(line.toByteArray())
             }
         } catch (e: Exception) {
@@ -188,6 +199,64 @@ object LogPersistenceManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to persist drift log: ${e.message}")
+        }
+    }
+
+    fun persistAcousticDiagResult(
+        context: Context,
+        mode: String,
+        result: String,
+        stability: String,
+        leftUptime: Double,
+        rightUptime: Double,
+        lostCount: Int,
+        leftAvgMagnitude: Double,
+        rightAvgMagnitude: Double
+    ) {
+        try {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appLogDir = File(downloadDir, DIR_NAME)
+            if (!appLogDir.exists()) appLogDir.mkdirs()
+
+            val dateStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+            val fileName = "AcousticDiag_$dateStr.csv"
+            val file = File(appLogDir, fileName)
+            val isNewFile = !file.exists() || file.length() == 0L
+            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+
+            FileOutputStream(file, true).use { fos ->
+                if (isNewFile) {
+                    fos.write("Timestamp,SessionId,Mode,Result,Stability,LeftUptimePct,RightUptimePct,LostCount,LeftAvgMagnitude,RightAvgMagnitude\n".toByteArray())
+                }
+                val line = "$timeStamp,$sessionId,$mode,$result,$stability,${String.format(Locale.US, "%.1f", leftUptime)},${String.format(Locale.US, "%.1f", rightUptime)},$lostCount,${String.format(Locale.US, "%.0f", leftAvgMagnitude)},${String.format(Locale.US, "%.0f", rightAvgMagnitude)}\n"
+                fos.write(line.toByteArray())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist acoustic diagnostic result: ${e.message}")
+        }
+    }
+
+    fun persistTestSummary(context: Context, source: String, metric: String, value: String, detail: String = "") {
+        try {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appLogDir = File(downloadDir, DIR_NAME)
+            if (!appLogDir.exists()) appLogDir.mkdirs()
+
+            val dateStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+            val fileName = "TestSummary_$dateStr.csv"
+            val file = File(appLogDir, fileName)
+            val isNewFile = !file.exists() || file.length() == 0L
+            val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+            val cleanDetail = detail.replace("\n", " ").replace("\r", " ").replace("\"", "'")
+
+            FileOutputStream(file, true).use { fos ->
+                if (isNewFile) {
+                    fos.write("Timestamp,SessionId,Source,Metric,Value,Detail\n".toByteArray())
+                }
+                fos.write("\"$timeStamp\",\"$sessionId\",\"$source\",\"$metric\",\"$value\",\"$cleanDetail\"\n".toByteArray())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist test summary: ${e.message}")
         }
     }
 

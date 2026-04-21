@@ -29,6 +29,7 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, 
     private lateinit var audioManager: AudioManager
     private var isAutoTesting = false
     private var testThread: Thread? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     // Stereo Test (File Based with TTS Pre-generation)
     private var isStereoTesting = false
@@ -63,17 +64,13 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, 
 
         // Manual Controls
         binding.openSpotifyButton.setOnClickListener { openSpotify() }
-        binding.playPauseButton.setOnClickListener { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) }
-        binding.prevButton.setOnClickListener { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
-        binding.nextButton.setOnClickListener { sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }
-        binding.stopButton.setOnClickListener { sendMediaKey(KeyEvent.KEYCODE_MEDIA_STOP) }
+        binding.playPauseButton.setOnClickListener { sendMediaKeyWithResponse(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, "Play/Pause") }
+        binding.prevButton.setOnClickListener { sendMediaKeyWithResponse(KeyEvent.KEYCODE_MEDIA_PREVIOUS, "Prev") }
+        binding.nextButton.setOnClickListener { sendMediaKeyWithResponse(KeyEvent.KEYCODE_MEDIA_NEXT, "Next") }
+        binding.stopButton.setOnClickListener { sendMediaKeyWithResponse(KeyEvent.KEYCODE_MEDIA_STOP, "Stop") }
         
-        binding.volUpButton.setOnClickListener { 
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
-        }
-        binding.volDownButton.setOnClickListener { 
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
-        }
+        binding.volUpButton.setOnClickListener { adjustVolumeWithResponse(AudioManager.ADJUST_RAISE, "Vol +") }
+        binding.volDownButton.setOnClickListener { adjustVolumeWithResponse(AudioManager.ADJUST_LOWER, "Vol -") }
 
         // Automation Controls
         binding.startVolCycleButton.setOnClickListener { startVolumeCycle() }
@@ -218,6 +215,57 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, 
         audioManager.dispatchMediaKeyEvent(eventUp)
     }
 
+    private fun sendMediaKeyWithResponse(keyCode: Int, label: String) {
+        val start = System.currentTimeMillis()
+        val beforeActive = audioManager.isMusicActive
+        sendMediaKey(keyCode)
+
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_NEXT || keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+            val dispatchMs = System.currentTimeMillis() - start
+            updateCommandResponse("$label dispatch: ${dispatchMs}ms (state not observable)")
+            log("Command Response: $label dispatched in ${dispatchMs}ms; media-session state change is not observable without player metadata access")
+            LogPersistenceManager.persistTestSummary(requireContext(), "MediaControl", label, "${dispatchMs}ms", "dispatchOnly=true")
+            return
+        }
+
+        pollCommandResponse(label, start) { audioManager.isMusicActive != beforeActive }
+    }
+
+    private fun adjustVolumeWithResponse(direction: Int, label: String) {
+        val start = System.currentTimeMillis()
+        val beforeVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+        pollCommandResponse(label, start) {
+            audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) != beforeVolume
+        }
+    }
+
+    private fun pollCommandResponse(label: String, start: Long, hasChanged: () -> Boolean) {
+        val timeoutMs = 2000L
+        fun poll() {
+            if (_binding == null) return
+            if (hasChanged()) {
+                val elapsed = System.currentTimeMillis() - start
+                updateCommandResponse("$label response: ${elapsed}ms")
+                log("Command Response: $label -> ${elapsed}ms")
+                LogPersistenceManager.persistTestSummary(requireContext(), "MediaControl", label, "${elapsed}ms", "observableStateChanged=true")
+            } else if (System.currentTimeMillis() - start >= timeoutMs) {
+                updateCommandResponse("$label response: timeout")
+                log("Command Response: $label -> timeout (${timeoutMs}ms)")
+                LogPersistenceManager.persistTestSummary(requireContext(), "MediaControl", label, "timeout", "timeoutMs=$timeoutMs")
+            } else {
+                mainHandler.postDelayed({ poll() }, 50)
+            }
+        }
+        mainHandler.post { poll() }
+    }
+
+    private fun updateCommandResponse(text: String) {
+        activity?.runOnUiThread {
+            if (_binding != null) binding.tvCommandResponse.text = "Command Response: $text"
+        }
+    }
+
     private fun startVolumeCycle() {
         val interval = binding.volIntervalInput.text.toString().toLongOrNull() ?: 1000L
         val minPct = binding.minVolInput.text.toString().toIntOrNull() ?: 20
@@ -283,8 +331,8 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, 
             try {
                 var count = 0
                 while (isAutoTesting && count < loopLimit) {
-                    val cmd = commands.random()
-                    sendMediaKey(cmd)
+	                    val cmd = commands.random()
+	                    sendMediaKeyWithResponse(cmd, keyLabel(cmd))
                     count++
                     
                     val currentCount = count
@@ -326,6 +374,14 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, 
         binding.startVolCycleButton.isEnabled = !running
         binding.startRapidPlayButton.isEnabled = !running
         binding.stopAutoButton.visibility = if (running) View.VISIBLE else View.GONE
+    }
+
+    private fun keyLabel(keyCode: Int): String = when (keyCode) {
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> "Play/Pause"
+        KeyEvent.KEYCODE_MEDIA_NEXT -> "Next"
+        KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "Prev"
+        KeyEvent.KEYCODE_MEDIA_STOP -> "Stop"
+        else -> "Key($keyCode)"
     }
 
     private fun log(message: String) {

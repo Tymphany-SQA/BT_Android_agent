@@ -84,6 +84,7 @@ class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
         binding.btnStartTest.visibility = View.GONE
         binding.btnStopTest.visibility = View.VISIBLE
         binding.tvLatencyResult.text = getString(R.string.measured_latency_none)
+        binding.tvLatencyStats.text = "Jitter: -- ms | P95: -- ms"
         
         addLog("Starting Audio Latency Test (5 rounds)...")
         
@@ -124,11 +125,23 @@ class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun finishMultiTest() {
         if (latencyResults.isNotEmpty()) {
             val average = latencyResults.average().toLong()
+            val jitter = calculateStdDev(latencyResults)
+            val p95 = percentile(latencyResults, 0.95)
             binding.tvLatencyResult.text = getString(R.string.average_latency_format, average)
+            binding.tvLatencyStats.text = String.format(Locale.US, "Jitter: %.1f ms | P95: %d ms", jitter, p95)
             addLog("==========================")
             addLog("Test Finished.")
             addLog("Results: ${latencyResults.joinToString(", ")} ms")
             addLog("Average Latency: $average ms")
+            addLog(String.format(Locale.US, "Latency Jitter (StdDev): %.1f ms", jitter))
+            addLog("P95 Latency: $p95 ms")
+            LogPersistenceManager.persistTestSummary(
+                requireContext(),
+                "AudioLatency",
+                "LatencyStats",
+                "${average}ms",
+                String.format(Locale.US, "jitter=%.1fms; p95=%dms; samples=%s", jitter, p95, latencyResults.joinToString("|"))
+            )
             addLog("==========================")
         }
         
@@ -265,7 +278,26 @@ class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun onLatencyMeasured(latency: Long) {
         if (!isTestRunning) return
         binding.tvLatencyResult.text = getString(R.string.measured_latency_format, latency)
+        if (latencyResults.isNotEmpty()) {
+            val jitter = calculateStdDev(latencyResults)
+            val p95 = percentile(latencyResults, 0.95)
+            binding.tvLatencyStats.text = String.format(Locale.US, "Jitter: %.1f ms | P95: %d ms", jitter, p95)
+        }
         addLog("Latency detected: $latency ms")
+    }
+
+    private fun calculateStdDev(values: List<Long>): Double {
+        if (values.size < 2) return 0.0
+        val avg = values.average()
+        val variance = values.map { (it - avg) * (it - avg) }.average()
+        return sqrt(variance)
+    }
+
+    private fun percentile(values: List<Long>, p: Double): Long {
+        if (values.isEmpty()) return 0
+        val sorted = values.sorted()
+        val index = kotlin.math.ceil(sorted.size * p).toInt().minus(1).coerceIn(0, sorted.size - 1)
+        return sorted[index]
     }
 
     private fun goertzel(samples: ShortArray, targetFreq: Double, sampleRate: Int): Double {

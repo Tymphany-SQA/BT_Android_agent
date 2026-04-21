@@ -48,32 +48,40 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:text="Normal"
-                    android:textSize="12sp"/>
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="4dp"
+                    android:text="Norm"
+                    android:textSize="11sp"/>
                 <Button
                     android:id="@+id/btnModeSwap"
                     style="?attr/materialButtonOutlinedStyle"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="4dp"
                     android:text="Swap"
-                    android:textSize="12sp"/>
+                    android:textSize="11sp"/>
                 <Button
                     android:id="@+id/btnModeLeft"
                     style="?attr/materialButtonOutlinedStyle"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:text="L-Only"
-                    android:textSize="12sp"/>
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="4dp"
+                    android:text="Left"
+                    android:textSize="11sp"/>
                 <Button
                     android:id="@+id/btnModeRight"
                     style="?attr/materialButtonOutlinedStyle"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:text="R-Only"
-                    android:textSize="12sp"/>
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="4dp"
+                    android:text="Right"
+                    android:textSize="11sp"/>
             </com.google.android.material.button.MaterialButtonToggleGroup>
 
             <LinearLayout
@@ -204,6 +212,15 @@
                 android:layout_height="wrap_content"
                 android:text="Mag: 0.0"
                 android:textAppearance="@style/TextAppearance.Material3.BodySmall"/>
+
+            <TextView
+                android:id="@+id/autoDiagSummaryText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Auto Diag Summary: --"
+                android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                android:textColor="?android:attr/textColorSecondary"/>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
