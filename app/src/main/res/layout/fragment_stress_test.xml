@@ -173,14 +173,14 @@
                         android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                         android:layout_marginTop="4dp" />
 
-	                    <TextView
-	                        android:id="@+id/tvKpiP90"
+                    <TextView
+                        android:id="@+id/tvKpiP90"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_columnWeight="1"
                         android:text="P90: - ms"
-	                        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-	                        android:layout_marginTop="4dp" />
+                        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                        android:layout_marginTop="4dp" />
 
                     <TextView
                         android:id="@+id/tvKpiP95"

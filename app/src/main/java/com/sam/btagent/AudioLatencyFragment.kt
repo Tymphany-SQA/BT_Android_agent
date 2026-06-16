@@ -17,9 +17,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
 
@@ -125,8 +123,8 @@ class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun finishMultiTest() {
         if (latencyResults.isNotEmpty()) {
             val average = latencyResults.average().toLong()
-            val jitter = calculateStdDev(latencyResults)
-            val p95 = percentile(latencyResults, 0.95)
+            val jitter = SignalUtils.stdDev(latencyResults)
+            val p95 = SignalUtils.percentile(latencyResults, 0.95)
             binding.tvLatencyResult.text = getString(R.string.average_latency_format, average)
             binding.tvLatencyStats.text = String.format(Locale.US, "Jitter: %.1f ms | P95: %d ms", jitter, p95)
             addLog("==========================")
@@ -241,7 +239,7 @@ class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
                     if (read > 0) {
                         // Only detect 2kHz if we are in switching mode and playback thread has updated frequency
                         if (isSwitching && currentFreq == freq2) {
-                            val mag2k = goertzel(buffer, freq2, sampleRate)
+                            val mag2k = SignalUtils.goertzelMagnitude(buffer, freq2, sampleRate)
                             if (mag2k > threshold) {
                                 val detectTime = System.currentTimeMillis()
                                 val latency = detectTime - switchTimestamp
@@ -279,45 +277,11 @@ class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
         if (!isTestRunning) return
         binding.tvLatencyResult.text = getString(R.string.measured_latency_format, latency)
         if (latencyResults.isNotEmpty()) {
-            val jitter = calculateStdDev(latencyResults)
-            val p95 = percentile(latencyResults, 0.95)
+            val jitter = SignalUtils.stdDev(latencyResults)
+            val p95 = SignalUtils.percentile(latencyResults, 0.95)
             binding.tvLatencyStats.text = String.format(Locale.US, "Jitter: %.1f ms | P95: %d ms", jitter, p95)
         }
         addLog("Latency detected: $latency ms")
-    }
-
-    private fun calculateStdDev(values: List<Long>): Double {
-        if (values.size < 2) return 0.0
-        val avg = values.average()
-        val variance = values.map { (it - avg) * (it - avg) }.average()
-        return sqrt(variance)
-    }
-
-    private fun percentile(values: List<Long>, p: Double): Long {
-        if (values.isEmpty()) return 0
-        val sorted = values.sorted()
-        val index = kotlin.math.ceil(sorted.size * p).toInt().minus(1).coerceIn(0, sorted.size - 1)
-        return sorted[index]
-    }
-
-    private fun goertzel(samples: ShortArray, targetFreq: Double, sampleRate: Int): Double {
-        val n = samples.size
-        val k = (0.5 + (n * targetFreq / sampleRate)).toInt()
-        val omega = 2.0 * PI * k / n
-        val cosine = cos(omega)
-        val coeff = 2.0 * cosine
-
-        var q0: Double
-        var q1 = 0.0
-        var q2 = 0.0
-
-        for (sample in samples) {
-            q0 = coeff * q1 - q2 + sample
-            q2 = q1
-            q1 = q0
-        }
-
-        return sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2)
     }
 
     private fun addLog(message: String) {
