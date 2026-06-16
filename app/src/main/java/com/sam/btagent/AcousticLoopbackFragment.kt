@@ -27,7 +27,6 @@ import java.util.*
 import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.math.sqrt
-import kotlin.math.cos
 
 class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
 
@@ -259,8 +258,8 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
                 while (isRunning) {
                     val read = audioRecord?.read(buf, 0, buf.size) ?: 0
                     if (read > 0) {
-                        val mL = goertzel(buf, 1000.0)
-                        val mR = goertzel(buf, 2000.0)
+                        val mL = SignalUtils.goertzelMagnitude(buf, 1000.0, sampleRate, hannWindow = true)
+                        val mR = SignalUtils.goertzelMagnitude(buf, 2000.0, sampleRate, hannWindow = true)
                         val rms = calculateRMS(buf)
                         activity?.runOnUiThread { if (_binding != null) updateUI(mL, mR, rms) }
                     }
@@ -272,22 +271,6 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun stopAnalysis() {
         runCatching { audioRecord?.stop(); audioRecord?.release() }
         audioRecord = null; analysisThread = null
-    }
-
-    // 優化後的 Goertzel：加入漢寧窗減少洩漏
-    private fun goertzel(samples: ShortArray, target: Double): Double {
-        val n = samples.size
-        val k = (n * target / sampleRate).toInt()
-        val omega = 2.0 * PI * k / n
-        val coeff = 2.0 * cos(omega)
-        var q1 = 0.0; var q2 = 0.0
-        for (i in samples.indices) {
-            // Hann window: 0.5 * (1 - cos(2*PI*i/(N-1)))
-            val win = 0.5 * (1.0 - cos(2.0 * PI * i / (n - 1)))
-            val q0 = coeff * q1 - q2 + (samples[i] * win)
-            q2 = q1; q1 = q0
-        }
-        return sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2)
     }
 
     private fun calculateRMS(s: ShortArray): Double {
@@ -431,7 +414,7 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
             "stability=${classification.stability}; L=${String.format(Locale.US, "%.0f", manualStats.leftUptime())}%; R=${String.format(Locale.US, "%.0f", manualStats.rightUptime())}%; lost=${manualStats.lostTransitions}"
         )
         addLog("${manualSummaryText(manualStatsMode, manualStats)} result=${classification.result} stability=${classification.stability}")
-        manualStats = ModeStats()
+        // manualStats is reset by the caller (resetManualStats on mode-switch, or startLoopback on next run).
     }
 
     private fun finishAutoDiagnosticSummary() {

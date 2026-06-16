@@ -31,9 +31,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
 
@@ -525,9 +523,8 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         val min = connectionTimes.minOrNull() ?: 0
         val max = connectionTimes.maxOrNull() ?: 0
         
-        val sorted = connectionTimes.sorted()
-        val p90 = percentile(sorted, 0.90)
-        val p95 = percentile(sorted, 0.95)
+        val p90 = SignalUtils.percentile(connectionTimes, 0.90)
+        val p95 = SignalUtils.percentile(connectionTimes, 0.95)
         val recoveryAvg = if (recoveryTimes.isNotEmpty()) recoveryTimes.average().toLong() else null
 
         binding.tvKpiAvg.text = getString(R.string.kpi_avg_format, avg)
@@ -546,18 +543,18 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         log("Average Time: ${connectionTimes.average().toInt()} ms")
         log("Min Time: ${connectionTimes.minOrNull()} ms")
         log("Max Time: ${connectionTimes.maxOrNull()} ms")
-        val sorted = connectionTimes.sorted()
-        val p90 = percentile(sorted, 0.90)
-        val p95 = percentile(sorted, 0.95)
+        val p90 = SignalUtils.percentile(connectionTimes, 0.90)
+        val p95 = SignalUtils.percentile(connectionTimes, 0.95)
         log("P90 Time: $p90 ms")
         log("P95 Time: $p95 ms")
         val summaryDetail = StringBuilder()
             .append("attempts=$connectionAttempts; successes=$connectionSuccesses; avg=${connectionTimes.average().toInt()}ms; min=${connectionTimes.minOrNull()}ms; max=${connectionTimes.maxOrNull()}ms; p90=${p90}ms; p95=${p95}ms")
         if (recoveryTimes.isNotEmpty()) {
+            val recoveryP95 = SignalUtils.percentile(recoveryTimes, 0.95)
             log("Recovery Success: $recoverySuccesses/$connectionSuccesses")
             log("Average Recovery: ${recoveryTimes.average().toInt()} ms")
-            log("P95 Recovery: ${percentile(recoveryTimes.sorted(), 0.95)} ms")
-            summaryDetail.append("; recoverySuccess=$recoverySuccesses/$connectionSuccesses; recoveryAvg=${recoveryTimes.average().toInt()}ms; recoveryP95=${percentile(recoveryTimes.sorted(), 0.95)}ms")
+            log("P95 Recovery: $recoveryP95 ms")
+            summaryDetail.append("; recoverySuccess=$recoverySuccesses/$connectionSuccesses; recoveryAvg=${recoveryTimes.average().toInt()}ms; recoveryP95=${recoveryP95}ms")
         }
         LogPersistenceManager.persistTestSummary(
             requireContext(),
@@ -567,12 +564,6 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
             summaryDetail.toString()
         )
         log("=========================")
-    }
-
-    private fun percentile(sortedValues: List<Long>, p: Double): Long {
-        if (sortedValues.isEmpty()) return 0
-        val index = kotlin.math.ceil(sortedValues.size * p).toInt().minus(1).coerceIn(0, sortedValues.size - 1)
-        return sortedValues[index]
     }
 
     private fun measureConnectionRecoveryTime(connectStartTime: Long): Long? {
@@ -644,7 +635,7 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
             val waitStart = System.currentTimeMillis()
             while (isTesting && System.currentTimeMillis() - waitStart < probeDurationMs) {
                 val read = probeRecord.read(readBuffer, 0, readBuffer.size)
-                if (read > 0 && goertzel(readBuffer, read, 440.0, sampleRate) > 500_000.0) {
+                if (read > 0 && SignalUtils.goertzelMagnitude(readBuffer, 440.0, sampleRate, read) > 500_000.0) {
                     detectedAt = System.currentTimeMillis()
                     break
                 }
@@ -662,22 +653,6 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
             runCatching { probeRecord?.stop(); probeRecord?.release() }
             runCatching { probeTrack?.stop(); probeTrack?.release() }
         }
-    }
-
-    private fun goertzel(samples: ShortArray, read: Int, targetFreq: Double, sampleRate: Int): Double {
-        val n = read.coerceAtMost(samples.size)
-        if (n <= 1) return 0.0
-        val k = (0.5 + (n * targetFreq / sampleRate)).toInt()
-        val omega = 2.0 * PI * k / n
-        val coeff = 2.0 * cos(omega)
-        var q1 = 0.0
-        var q2 = 0.0
-        for (i in 0 until n) {
-            val q0 = coeff * q1 - q2 + samples[i]
-            q2 = q1
-            q1 = q0
-        }
-        return sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2)
     }
 
     private fun playGeneratedAudio(durationSec: Int, type: AudioType, loopIndex: Int = 0) {

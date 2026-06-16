@@ -234,7 +234,19 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, 
     private fun adjustVolumeWithResponse(direction: Int, label: String) {
         val start = System.currentTimeMillis()
         val beforeVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        // If the stream is already at the rail in the requested direction, the
+        // volume can't change — that's correct behaviour, not a failed command.
+        val saturated = (direction == AudioManager.ADJUST_RAISE && beforeVolume >= maxVolume) ||
+                (direction == AudioManager.ADJUST_LOWER && beforeVolume <= 0)
         audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+        if (saturated) {
+            val limit = if (direction == AudioManager.ADJUST_RAISE) "max" else "min"
+            updateCommandResponse("$label at $limit (no change)")
+            log("Command Response: $label already at $limit volume ($beforeVolume); nothing to change")
+            LogPersistenceManager.persistTestSummary(requireContext(), "MediaControl", label, "saturated", "atLimit=$limit; volume=$beforeVolume")
+            return
+        }
         pollCommandResponse(label, start) {
             audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) != beforeVolume
         }
@@ -331,8 +343,8 @@ class MediaControlStressFragment : Fragment(), MainActivity.TestStatusProvider, 
             try {
                 var count = 0
                 while (isAutoTesting && count < loopLimit) {
-	                    val cmd = commands.random()
-	                    sendMediaKeyWithResponse(cmd, keyLabel(cmd))
+                    val cmd = commands.random()
+                    sendMediaKeyWithResponse(cmd, keyLabel(cmd))
                     count++
                     
                     val currentCount = count
