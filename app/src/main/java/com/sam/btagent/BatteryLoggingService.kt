@@ -39,7 +39,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
-import kotlin.math.cos
 import kotlin.math.PI
 import kotlin.math.pow
 import kotlin.math.sin
@@ -484,7 +483,7 @@ class BatteryLoggingService : Service() {
     }
 
     private fun updateAcousticContinuity(samples: ShortArray, read: Int) {
-        val magnitude = goertzel(samples, read, 440.0, 44100)
+        val magnitude = SignalUtils.goertzelMagnitude(samples, 440.0, 44100, read)
         val rms = calculateRms(samples, read)
         val detected = magnitude > 250_000.0 && rms > 20.0
         acousticSamples += 1
@@ -498,22 +497,6 @@ class BatteryLoggingService : Service() {
             addLog("Acoustic output DETECTED")
         }
         lastAcousticDetected = detected
-    }
-
-    private fun goertzel(samples: ShortArray, read: Int, targetFreq: Double, sampleRate: Int): Double {
-        val n = read.coerceAtMost(samples.size)
-        if (n <= 1) return 0.0
-        val k = (0.5 + (n * targetFreq / sampleRate)).toInt()
-        val omega = 2.0 * PI * k / n
-        val coeff = 2.0 * cos(omega)
-        var q1 = 0.0
-        var q2 = 0.0
-        for (i in 0 until n) {
-            val q0 = coeff * q1 - q2 + samples[i]
-            q2 = q1
-            q1 = q0
-        }
-        return sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2)
     }
 
     private fun calculateRms(samples: ShortArray, read: Int): Double {

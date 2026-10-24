@@ -287,7 +287,7 @@ class AudioLatencyFragment : Fragment(), MainActivity.TestStatusProvider {
     private fun addLog(message: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val entry = "[$time] $message\n"
-        binding.tvLog.append(entry)
+        _binding?.tvLog?.append(entry)
     }
 
     override fun isTestRunning(): Boolean = isTestRunning
