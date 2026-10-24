@@ -21,9 +21,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
 
@@ -221,7 +219,7 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
                     while (isTestRunning && audioRecord != null) {
                         val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                         if (read > 0) {
-                            val magnitude = goertzel(buffer, targetFreq, sampleRate)
+                            val magnitude = SignalUtils.goertzelMagnitude(buffer, targetFreq, sampleRate)
                             
                             val now = System.currentTimeMillis()
                             if (now - lastLogTime > 500) { // Update UI magnitude every 500ms
@@ -263,31 +261,11 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
         analysisThread = null
     }
 
-    private fun goertzel(samples: ShortArray, targetFreq: Double, sampleRate: Int): Double {
-        val n = samples.size
-        val k = (0.5 + (n * targetFreq / sampleRate)).toInt()
-        val omega = 2.0 * PI * k / n
-        val cosine = cos(omega)
-        val coeff = 2.0 * cosine
-
-        var q0 = 0.0
-        var q1 = 0.0
-        var q2 = 0.0
-
-        for (sample in samples) {
-            q0 = coeff * q1 - q2 + sample
-            q2 = q1
-            q1 = q0
-        }
-
-        return sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2)
-    }
-
     private fun addLog(message: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val entry = "[$time] $message\n"
         activity?.runOnUiThread {
-            binding.tvLog.append(entry)
+            _binding?.tvLog?.append(entry)
         }
     }
 

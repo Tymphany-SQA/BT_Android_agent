@@ -376,12 +376,13 @@ class StressTestFragment : Fragment(), MainActivity.TestStatusProvider {
         val timeStamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         activity?.let { act ->
             act.runOnUiThread {
-                binding.testLogText.append("[$timeStamp] $message\n")
-                val scrollAmount = binding.testLogText.layout?.let { 
-                    it.getLineTop(binding.testLogText.lineCount) - binding.testLogText.height 
+                val b = _binding ?: return@runOnUiThread
+                b.testLogText.append("[$timeStamp] $message\n")
+                val scrollAmount = b.testLogText.layout?.let {
+                    it.getLineTop(b.testLogText.lineCount) - b.testLogText.height
                 } ?: 0
                 if (scrollAmount > 0) {
-                    binding.testLogText.scrollTo(0, scrollAmount)
+                    b.testLogText.scrollTo(0, scrollAmount)
                 }
             }
             LogPersistenceManager.persistLog(act.applicationContext, "StressTest", message)

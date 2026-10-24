@@ -149,6 +149,7 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
                     activeAutoModeStartedAt = System.currentTimeMillis()
 
                     activity?.runOnUiThread {
+                        if (_binding == null) return@runOnUiThread
                         // 同步更新 UI 按鈕狀態
                         val btnId = when(mode) {
                             TestMode.LEFT_ONLY, TestMode.SWAP_LEFT_ONLY -> R.id.btnModeLeft
@@ -162,8 +163,13 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
                     }
                     Thread.sleep(sec * 1000L)
                 }
-            } catch (e: Exception) {} finally {
+            } catch (e: InterruptedException) {
+                // Expected when the diagnostic is stopped mid-sleep.
+            } catch (e: Exception) {
+                activity?.runOnUiThread { addLog("Auto Diag error: ${e.message}") }
+            } finally {
                 activity?.runOnUiThread {
+                    if (_binding == null) return@runOnUiThread
                     finishAutoDiagnosticSummary()
                     currentMode = TestMode.NORMAL
                     stopLoopback()
@@ -188,6 +194,7 @@ class AcousticLoopbackFragment : Fragment(), MainActivity.TestStatusProvider {
         isRunning = false
         isAutoDiagnosticRunning = false
         activity?.runOnUiThread {
+            if (_binding == null) return@runOnUiThread
             binding.btnToggleTone.text = "Start Manual"
             binding.btnToggleTone.isEnabled = true
             binding.btnAutoDiagnostic.text = "Auto Diag"
