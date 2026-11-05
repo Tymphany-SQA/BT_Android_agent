@@ -24,7 +24,7 @@ class AudioClockDriftFragment : Fragment(), MainActivity.TestStatusProvider {
     private var _binding: FragmentAudioClockDriftBinding? = null
     private val binding get() = _binding!!
 
-    private var isTesting = false
+    @Volatile private var isTesting = false
     private var playThread: Thread? = null
     private var recordThread: Thread? = null
 
@@ -94,6 +94,9 @@ class AudioClockDriftFragment : Fragment(), MainActivity.TestStatusProvider {
         }
         
         log("Acoustic Monitor (Window: ${analysisBufferSize/480.0}ms + Hanning)...")
+        // Captured on the main thread: the record thread must never call requireContext(),
+        // which throws once the fragment is detached while the thread is still running.
+        val appContext = requireContext().applicationContext
         val testRate = SAMPLE_RATE_48K
         val recordBufSize = AudioRecord.getMinBufferSize(testRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(analysisBufferSize * 2)
         
@@ -160,7 +163,8 @@ class AudioClockDriftFragment : Fragment(), MainActivity.TestStatusProvider {
                         accumulatedOffsetMs += offsetGainMs
 
                         activity?.runOnUiThread { updateUI(driftPpm, detectedFreq, "Hz (Acoustic)") }
-                        LogPersistenceManager.persistDriftLog(requireContext(), "Acoustic", driftPpm, detectedFreq)
+                        if (!isTesting) break
+                        LogPersistenceManager.persistDriftLog(appContext, "Acoustic", driftPpm, detectedFreq)
                     }
                 }
             }.apply { start() }
@@ -234,10 +238,12 @@ class AudioClockDriftFragment : Fragment(), MainActivity.TestStatusProvider {
     override fun isTestRunning() = isTesting
     override fun stopTest() {
         isTesting = false
-        playThread?.interrupt(); playThread = null
-        recordThread?.interrupt(); recordThread = null
-
-        try { audioTrack?.release(); audioRecord?.release() } catch (e: Exception) {}
+        // interrupt() does not unblock AudioRecord.read(); AudioIo stops the streams,
+        // joins the threads and only then releases.
+        playThread?.interrupt()
+        recordThread?.interrupt()
+        AudioIo.shutdown(listOf(playThread, recordThread), audioTrack, audioRecord, joinTimeoutMs = 2500)
+        playThread = null; recordThread = null
         audioTrack = null; audioRecord = null
         activity?.runOnUiThread {
             if (_binding != null) {

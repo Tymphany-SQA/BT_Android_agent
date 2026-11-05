@@ -37,8 +37,9 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
             val localBinder = binder as? BatteryLoggingService.LocalBinder
             val s = localBinder?.getService()
             service = s
-            isBound = true
-            
+            // The bind can complete after the view is gone (user left the page quickly).
+            if (_binding == null) return
+
             if (s != null) {
                 if (startLoggingPending) {
                     val intervalSec = binding.batteryIntervalInput.text.toString().toLongOrNull() ?: 60L
@@ -55,6 +56,7 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
                 }
                 s.setLogUpdateListener { newEntry: String ->
                     activity?.runOnUiThread {
+                        if (_binding == null) return@runOnUiThread
                         binding.batteryHistoryText.append(newEntry)
                         autoScrollLog()
                         updateRssiUI(service?.getLastKnownRssi())
@@ -66,7 +68,7 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            isBound = false
+            // Process died; the binding itself is still registered and must be unbound later.
             service = null
         }
     }
@@ -113,7 +115,8 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
         }
 
         val intent = Intent(requireContext(), BatteryLoggingService::class.java)
-        requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        // Track the bind request itself (not the connection) so onDestroyView always unbinds.
+        isBound = requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         val filter = IntentFilter("android.bluetooth.device.action.BATTERY_LEVEL_CHANGED")
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -206,7 +209,9 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
             // 如果 Service 尚未 bind 成功，先啟動 Service 並標記為 pending (P2 Review Fix)
             val intent = Intent(requireContext(), BatteryLoggingService::class.java)
             ContextCompat.startForegroundService(requireContext(), intent)
-            requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+            if (!isBound) {
+                isBound = requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+            }
             startLoggingPending = true
             Toast.makeText(context, "Initializing service...", Toast.LENGTH_SHORT).show()
             return
@@ -216,10 +221,13 @@ class BatteryMonitorFragment : Fragment(), MainActivity.TestStatusProvider {
     }
 
     private fun performStartLogging(device: BluetoothDevice, intervalSec: Long) {
-        service?.startLogging(device, intervalSec, binding.swEnableAudioMonitor.isChecked, 
-            binding.cbSilentMode.isChecked, binding.bufferStrategySpinner.selectedItemPosition)
-        updateLoggingUI(true)
         startLoggingPending = false
+        val started = service?.startLogging(device, intervalSec, binding.swEnableAudioMonitor.isChecked,
+            binding.cbSilentMode.isChecked, binding.bufferStrategySpinner.selectedItemPosition) ?: false
+        updateLoggingUI(started)
+        if (!started) {
+            Toast.makeText(requireContext(), "Could not start monitoring (foreground service denied)", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun stopLogging() {

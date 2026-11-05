@@ -17,6 +17,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
@@ -32,6 +33,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileOutputStream
@@ -67,7 +69,10 @@ class BatteryLoggingService : Service() {
 
     private var audioTrack: AudioTrack? = null
     private var audioRecord: AudioRecord? = null
+    private var playbackThread: Thread? = null
+    private var acousticThread: Thread? = null
     @Volatile private var acousticMonitorRunning = false
+    private var micForegroundGranted = false
     private var lastUnderrunCount = 0
     private var totalGlitches = 0
     private val rssiWindow = ArrayDeque<Int>()
@@ -92,6 +97,66 @@ class BatteryLoggingService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
+
+    /**
+     * Called for both startForegroundService() (fragment's pending path) and our own
+     * startService() in startLogging(). startForeground() must be called promptly after
+     * startForegroundService(), otherwise the system kills the whole app with
+     * ForegroundServiceDidNotStartInTimeException.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val text = if (isLogging) "Stability Monitoring Active" else "Stability Monitor Ready"
+        if (!enterForeground(text)) {
+            stopSelf()
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        // Started via startForegroundService() but the user never began logging
+        // (e.g. left the page before the bind completed): don't linger as an idle FGS.
+        if (!isLogging) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+        return false
+    }
+
+    private fun needsMicrophone(): Boolean =
+        enableAudioMonitor && !silentMode &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Enter (or refresh) the foreground state with an explicit service type.
+     * Without an explicit type, targetSdk 34+ applies every type declared in the manifest
+     * (connectedDevice|microphone), which throws SecurityException when the microphone
+     * permission is missing or the app is in the background.
+     */
+    private fun enterForeground(text: String): Boolean {
+        val notification = createNotification(text)
+        val baseType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        if (isLogging && needsMicrophone()) {
+            try {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification,
+                    baseType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                micForegroundGranted = true
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "Microphone FGS type rejected: ${e.message}")
+                micForegroundGranted = false
+                // fall through to connectedDevice only
+            }
+        } else {
+            micForegroundGranted = false
+        }
+        return try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, baseType)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed: ${e.message}")
+            false
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -146,8 +211,9 @@ class BatteryLoggingService : Service() {
         }
     }
 
-    fun startLogging(device: BluetoothDevice, interval: Long, enableAudio: Boolean, silent: Boolean, strategy: Int) {
-        if (isLogging) return
+    /** @return true if monitoring started; false if the foreground service could not be entered. */
+    fun startLogging(device: BluetoothDevice, interval: Long, enableAudio: Boolean, silent: Boolean, strategy: Int): Boolean {
+        if (isLogging) return true
         this.targetDevice = device
         this.intervalSec = interval
         this.enableAudioMonitor = enableAudio
@@ -157,9 +223,21 @@ class BatteryLoggingService : Service() {
         this.totalGlitches = 0
         this.lastUnderrunCount = 0
         resetQualityMetrics()
-        
-        startForeground(NOTIFICATION_ID, createNotification("Stability Monitoring Active"))
+
+        if (!enterForeground("Stability Monitoring Active")) {
+            isLogging = false
+            addLog("Error: could not start foreground service; monitoring not started")
+            return false
+        }
+        // Make the service "started", not just bound, so monitoring survives the
+        // fragment unbinding when the user navigates away from this page.
+        runCatching { startService(Intent(this, BatteryLoggingService::class.java)) }
+            .onFailure { Log.w(TAG, "startService failed: ${it.message}") }
+
         addLog("Starting Stability Monitor for ${device.address}")
+        if (enableAudio && !silent && !micForegroundGranted) {
+            addLog("Acoustic Continuity: microphone foreground access not granted")
+        }
         
         if (enableAudio) {
             startBackgroundAudio()
@@ -190,6 +268,7 @@ class BatteryLoggingService : Service() {
             }
         }
         handler.post(logRunnable!!)
+        return true
     }
 
     private fun getAudioRoute(): String {
@@ -232,7 +311,7 @@ class BatteryLoggingService : Service() {
             val samples = ShortArray(1024)
             audioTrack?.play()
             
-            Thread {
+            playbackThread = Thread({
                 while (isLogging && audioTrack != null) {
                     if (silentMode) {
                         // 使用極低振幅雜訊避免部分系統進入 Deep Sleep
@@ -250,7 +329,7 @@ class BatteryLoggingService : Service() {
                         }
                     } catch (e: Exception) { break }
                 }
-            }.start()
+            }, "StabilityPlayback").apply { start() }
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 lastUnderrunCount = audioTrack?.underrunCount ?: 0
@@ -268,6 +347,11 @@ class BatteryLoggingService : Service() {
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             addLog("Acoustic Continuity: RECORD_AUDIO permission missing")
+            return
+        }
+        if (!micForegroundGranted) {
+            // Without the microphone FGS type the system feeds silence in the background,
+            // which would be reported as false "LOST" events.
             return
         }
 
@@ -289,7 +373,7 @@ class BatteryLoggingService : Service() {
             acousticMonitorRunning = true
             audioRecord?.startRecording()
 
-            Thread {
+            acousticThread = Thread({
                 val buffer = ShortArray(2048)
                 while (isLogging && acousticMonitorRunning) {
                     val read = try {
@@ -299,7 +383,7 @@ class BatteryLoggingService : Service() {
                     }
                     if (read > 0) updateAcousticContinuity(buffer, read)
                 }
-            }.start()
+            }, "StabilityAcoustic").apply { start() }
             addLog("Acoustic Continuity monitor started (440Hz)")
         } catch (e: Exception) {
             acousticMonitorRunning = false
@@ -347,18 +431,25 @@ class BatteryLoggingService : Service() {
     }
 
     fun stopLogging() {
-        isLogging = false
-        logRunnable?.let { handler.removeCallbacks(it) }
-        audioTrack?.let { try { it.stop(); it.release() } catch (e: Exception) {} }
-        audioTrack = null
-        acousticMonitorRunning = false
-        audioRecord?.let { try { it.stop(); it.release() } catch (e: Exception) {} }
-        audioRecord = null
-        activeGatt?.close()
-        activeGatt = null
+        releaseResources()
         stopForeground(STOP_FOREGROUND_REMOVE)
         addLog("Logging stopped.")
         stopSelf()
+    }
+
+    private fun releaseResources() {
+        isLogging = false
+        acousticMonitorRunning = false
+        logRunnable?.let { handler.removeCallbacks(it) }
+        // Flags are cleared first so the worker loops exit; AudioIo unblocks
+        // read()/write(), joins the threads, then releases.
+        AudioIo.shutdown(listOf(playbackThread, acousticThread), audioTrack, audioRecord)
+        playbackThread = null
+        acousticThread = null
+        audioTrack = null
+        audioRecord = null
+        activeGatt?.close()
+        activeGatt = null
     }
 
     fun isLoggingActive() = isLogging
@@ -538,6 +629,9 @@ class BatteryLoggingService : Service() {
     }
 
     override fun onDestroy() {
+        if (isLogging || audioTrack != null || audioRecord != null || activeGatt != null) {
+            releaseResources()
+        }
         try { unregisterReceiver(bluetoothReceiver) } catch (e: Exception) {}
         super.onDestroy()
     }
