@@ -21,6 +21,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
+import kotlin.math.log10
 import kotlin.math.sin
 
 class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
@@ -34,21 +35,31 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
     // Audio Settings
     private val sampleRate = 44100
     private val targetFreq = 1000.0
-    private var isTestRunning = false
+    @Volatile private var isTestRunning = false
 
     // Tone Generation
     private var audioTrack: AudioTrack? = null
-    private var isPlayingTone = false
+    @Volatile private var isPlayingTone = false
+    private var toneThread: Thread? = null
 
     // Recording and Analysis
     private var audioRecord: AudioRecord? = null
     private var analysisThread: Thread? = null
-    
+
     // Test State
-    private var currentStep = 0
-    private val maxSteps = 15
-    private val stepDurationMs = 2000L // 2 seconds per step
-    private val results = mutableListOf<Pair<Int, Double>>()
+    /** Read from the device: STREAM_MUSIC is not 15 steps on every phone (e.g. 25 on Pixel). */
+    private var maxSteps = 15
+    @Volatile private var currentStep = 0
+    private val stepDurationMs = 2000L
+    /** Ignore the first part of each step while the volume change settles. */
+    private val settleMs = 800L
+    /** Step currently being sampled, or -1 while settling. Written on main, read on analysis thread. */
+    @Volatile private var measuringStep = -1
+    /** step -> magnitudes collected after settling. Guarded by itself. */
+    private val stepSamples = HashMap<Int, MutableList<Double>>()
+
+    /** User's volume before the test, restored on stop. null = nothing to restore. */
+    private var originalVolume: Int? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -62,6 +73,9 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        maxSteps = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        binding.testProgressBar.max = maxSteps
+        binding.tvCurrentStep.text = "Current Step: - / $maxSteps"
 
         binding.btnStartTest.setOnClickListener {
             startLinearityTest()
@@ -79,36 +93,46 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
             return
         }
 
+        maxSteps = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        binding.testProgressBar.max = maxSteps
+        originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
         isTestRunning = true
         binding.btnStartTest.isEnabled = false
         binding.btnStopTest.isEnabled = true
         binding.tvLog.text = ""
-        results.clear()
+        synchronized(stepSamples) { stepSamples.clear() }
         currentStep = 0
+        measuringStep = -1
 
-        addLog("Starting Volume Linearity Test (0-15)...")
+        addLog("Starting Volume Linearity Test (0-$maxSteps), original volume=$originalVolume...")
         startTone()
         startAnalysis()
-        
+
         runNextStep()
     }
 
     private fun runNextStep() {
         if (!isTestRunning) return
+        val b = _binding ?: return
 
         if (currentStep <= maxSteps) {
-            binding.tvCurrentStep.text = "Current Step: $currentStep / $maxSteps"
-            binding.testProgressBar.progress = currentStep
-            
-            // Set system volume
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, currentStep, 0)
-            addLog("Step $currentStep: Setting volume to $currentStep...")
+            val step = currentStep
+            b.tvCurrentStep.text = "Current Step: $step / $maxSteps"
+            b.testProgressBar.progress = step
 
-            // Wait for volume to settle and measure
+            measuringStep = -1
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, step, 0)
+            addLog("Step $step: Setting volume to $step...")
+
+            // Sample only after the volume change has settled.
+            mainHandler.postDelayed({
+                if (isTestRunning && currentStep == step) measuringStep = step
+            }, settleMs)
+
             mainHandler.postDelayed({
                 if (isTestRunning) {
-                    // Capture current magnitude from analysis (simplified: we'll use a callback or shared var)
-                    // For this implementation, we'll just log what the analysis thread is currently seeing
+                    measuringStep = -1
                     currentStep++
                     runNextStep()
                 }
@@ -119,26 +143,62 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
     }
 
     private fun finishTest() {
+        measuringStep = -1
+        val means: List<Pair<Int, Double>> = synchronized(stepSamples) {
+            (0..maxSteps).mapNotNull { step ->
+                stepSamples[step]?.takeIf { it.isNotEmpty() }?.let { step to it.average() }
+            }
+        }
+        val peak = means.maxOfOrNull { it.second } ?: 0.0
+
         addLog("Test Complete.")
-        addLog("--- Summary ---")
-        results.forEach { (step, mag) ->
-            addLog("Step $step: Magnitude = ${String.format("%.1f", mag)}")
+        addLog("--- Summary (mean magnitude, dB re. loudest step) ---")
+        val details = means.map { (step, mag) ->
+            val db = if (peak > 0 && mag > 0) 20.0 * log10(mag / peak) else Double.NEGATIVE_INFINITY
+            addLog(String.format(Locale.US, "Step %d: Magnitude = %.1f (%.1f dB)", step, mag, db))
+            String.format(Locale.US, "%d:%.1f:%.1fdB", step, mag, db)
+        }
+        val missing = (maxSteps + 1) - means.size
+        if (missing > 0) addLog("Warning: $missing step(s) had no settled samples")
+
+        context?.let { ctx ->
+            LogPersistenceManager.persistTestSummary(
+                ctx,
+                "VolumeLinearity",
+                "StepMagnitudes",
+                "${means.size}/${maxSteps + 1} steps",
+                "maxSteps=$maxSteps; step:mag:dB=" + details.joinToString("|")
+            )
+            addLog("Saved to TestSummary CSV.")
         }
         stopTest()
     }
 
     override fun stopTest() {
+        val wasRunning = isTestRunning
         isTestRunning = false
         isPlayingTone = false
+        measuringStep = -1
         mainHandler.removeCallbacksAndMessages(null)
-        
-        stopTone()
-        stopAnalysis()
 
-        activity?.runOnUiThread {
-            binding.btnStartTest.isEnabled = true
-            binding.btnStopTest.isEnabled = false
-            binding.tvCurrentStep.text = "Current Step: - / 15"
+        // Flags are cleared first; AudioIo unblocks write()/read(), joins, then releases.
+        AudioIo.shutdown(listOf(toneThread, analysisThread), audioTrack, audioRecord)
+        toneThread = null
+        analysisThread = null
+        audioTrack = null
+        audioRecord = null
+
+        // Don't leave the user's phone at max volume.
+        originalVolume?.let { vol ->
+            runCatching { audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0) }
+            if (wasRunning) addLog("Volume restored to $vol")
+        }
+        originalVolume = null
+
+        _binding?.let {
+            it.btnStartTest.isEnabled = true
+            it.btnStopTest.isEnabled = false
+            it.tvCurrentStep.text = "Current Step: - / $maxSteps"
         }
     }
 
@@ -149,7 +209,7 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
         if (bufferSize <= 0) return
 
         try {
-            audioTrack = AudioTrack(
+            val track = AudioTrack(
                 AudioManager.STREAM_MUSIC,
                 sampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
@@ -157,42 +217,32 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
                 bufferSize,
                 AudioTrack.MODE_STREAM
             )
+            audioTrack = track
 
             isPlayingTone = true
             val samples = ShortArray(bufferSize)
             var phase = 0.0
             val phaseIncrement = 2 * PI * targetFreq / sampleRate
 
-            audioTrack?.play()
+            track.play()
 
-            Thread {
+            toneThread = Thread({
                 try {
-                    while (isPlayingTone && audioTrack != null) {
+                    while (isPlayingTone) {
                         for (i in samples.indices) {
                             samples[i] = (sin(phase) * Short.MAX_VALUE).toInt().toShort()
                             phase += phaseIncrement
                             if (phase > 2 * PI) phase -= 2 * PI
                         }
-                        audioTrack?.write(samples, 0, samples.size)
+                        track.write(samples, 0, samples.size)
                     }
                 } catch (e: Exception) {
                     activity?.runOnUiThread { addLog("Tone Error: ${e.message}") }
                 }
-            }.start()
+            }, "VolumeTone").apply { start() }
         } catch (e: Exception) {
             addLog("AudioTrack setup failed: ${e.message}")
         }
-    }
-
-    private fun stopTone() {
-        isPlayingTone = false
-        audioTrack?.apply {
-            try {
-                stop()
-                release()
-            } catch (e: Exception) {}
-        }
-        audioTrack = null
     }
 
     private fun startAnalysis() {
@@ -202,63 +252,50 @@ class VolumeLinearityFragment : Fragment(), MainActivity.TestStatusProvider {
         if (bufferSize <= 0) return
 
         try {
-            audioRecord = AudioRecord(
+            val record = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
                 bufferSize
             )
+            audioRecord = record
 
-            audioRecord?.startRecording()
+            record.startRecording()
 
-            analysisThread = Thread {
+            analysisThread = Thread({
                 val buffer = ShortArray(1024)
-                var lastLogTime = 0L
+                var lastUiTime = 0L
                 try {
-                    while (isTestRunning && audioRecord != null) {
-                        val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                        if (read > 0) {
-                            val magnitude = SignalUtils.goertzelMagnitude(buffer, targetFreq, sampleRate)
-                            
-                            val now = System.currentTimeMillis()
-                            if (now - lastLogTime > 500) { // Update UI magnitude every 500ms
-                                lastLogTime = now
-                                activity?.runOnUiThread {
-                                    if (_binding != null) {
-                                        binding.tvCurrentMagnitude.text = String.format(Locale.US, "Last Magnitude: %.1f", magnitude)
-                                    }
-                                }
-                                // Store result for current step if we are mid-step
-                                if (currentStep in 0..maxSteps) {
-                                    val existing = results.find { it.first == currentStep }
-                                    if (existing == null) {
-                                        results.add(currentStep to magnitude)
-                                    } else {
-                                        // Update with latest (maybe average later, but for now just update)
-                                        results[results.indexOf(existing)] = currentStep to magnitude
-                                    }
-                                }
+                    while (isTestRunning) {
+                        val read = record.read(buffer, 0, buffer.size)
+                        if (read < 0) break      // error code (e.g. after stop) — don't busy-spin
+                        if (read == 0) continue
+                        val magnitude = SignalUtils.goertzelMagnitude(buffer, targetFreq, sampleRate, read)
+
+                        val step = measuringStep
+                        if (step >= 0) {
+                            synchronized(stepSamples) {
+                                stepSamples.getOrPut(step) { mutableListOf() }.add(magnitude)
+                            }
+                        }
+
+                        val now = System.currentTimeMillis()
+                        if (now - lastUiTime > 500) { // Update UI magnitude every 500ms
+                            lastUiTime = now
+                            activity?.runOnUiThread {
+                                _binding?.tvCurrentMagnitude?.text =
+                                    String.format(Locale.US, "Last Magnitude: %.1f", magnitude)
                             }
                         }
                     }
-                } catch (e: Exception) {}
-            }
-            analysisThread?.start()
+                } catch (e: Exception) {
+                    activity?.runOnUiThread { addLog("Analysis Error: ${e.message}") }
+                }
+            }, "VolumeAnalysis").apply { start() }
         } catch (e: Exception) {
             addLog("Analysis Setup Error: ${e.message}")
         }
-    }
-
-    private fun stopAnalysis() {
-        audioRecord?.apply {
-            try {
-                stop()
-                release()
-            } catch (e: Exception) {}
-        }
-        audioRecord = null
-        analysisThread = null
     }
 
     private fun addLog(message: String) {
